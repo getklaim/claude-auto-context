@@ -7,3 +7,7 @@ logs/
 ~$*.pptx
 docs/.bkit-memory.json
 docs/.pdca-status.json
+
+# Auto Context runtime
+node_modules/
+.claude-auto-context/db/

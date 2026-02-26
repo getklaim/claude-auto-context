@@ -1,16 +1,11 @@
 #!/bin/bash
 # Stop Hook
-# Fires: when Claude finishes responding
-# Input (stdin): { hook_event_name, stop_hook_active, last_assistant_message, session_id }
-# Output (stdout): { ok: boolean, reason?: string }
-# ok=false -> prevents Claude from stopping
+# Pipes raw JSON from stdin to collector. No filtering or analysis.
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 INPUT=$(cat)
 
-cat <<EOF
-{
-  "ok": true
-}
-EOF
+echo "$INPUT" | node "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" Stop
 
 exit 0
