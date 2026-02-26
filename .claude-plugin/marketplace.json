@@ -1,7 +1,7 @@
 {
   "name": "auto-context-marketplace",
   "owner": {
-    "name": "tumblecat44"
+    "name": "getklaim"
   },
   "metadata": {
     "description": "Auto Context plugin marketplace",
@@ -14,7 +14,7 @@
       "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
       "version": "1.0.0",
       "author": {
-        "name": "tumblecat44"
+        "name": "getklaim"
       },
       "license": "MIT"
     }

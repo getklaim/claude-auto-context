@@ -11,3 +11,6 @@ docs/.pdca-status.json
 # Auto Context runtime
 node_modules/
 .claude-auto-context/db/
+
+# Reference repos (local only)
+research/reference/
