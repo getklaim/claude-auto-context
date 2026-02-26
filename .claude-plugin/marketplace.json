@@ -1,0 +1,22 @@
+{
+  "name": "auto-context-marketplace",
+  "owner": {
+    "name": "tumblecat44"
+  },
+  "metadata": {
+    "description": "Auto Context plugin marketplace",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-auto-context",
+      "source": ".",
+      "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
+      "version": "1.0.0",
+      "author": {
+        "name": "tumblecat44"
+      },
+      "license": "MIT"
+    }
+  ]
+}

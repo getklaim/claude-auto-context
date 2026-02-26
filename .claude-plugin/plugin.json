@@ -1,0 +1,10 @@
+{
+  "name": "claude-auto-context",
+  "version": "1.0.0",
+  "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
+  "author": {
+    "name": "tumblecat44"
+  },
+  "license": "MIT",
+  "keywords": ["hooks", "interceptor", "logging", "lifecycle"]
+}
