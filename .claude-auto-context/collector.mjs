@@ -1,17 +1,13 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // collector.mjs — Hook to SQLite relay
 // Parses raw JSON from stdin and inserts into SQLite.
 // No analysis, no summarization. Just store.
+// Uses bun:sqlite — zero native dependencies.
 
-import { createRequire } from 'module';
+import { Database } from 'bun:sqlite';
 import { mkdirSync, existsSync } from 'fs';
-import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { resolve } from 'path';
 
-const require = createRequire(import.meta.url);
-const Database = require('better-sqlite3');
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const hookType = process.argv[2]; // 'PostToolUse' | 'Stop' | 'SessionStart' | 'UserPromptSubmit'
 
 if (!hookType) {
@@ -41,10 +37,10 @@ process.stdin.on('end', () => {
     }
 
     const db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
+    db.run('PRAGMA journal_mode = WAL');
 
-    // Create table if missing
-    db.exec(`
+    // Create table if missing — Claim-Confirm queue schema
+    db.run(`
       CREATE TABLE IF NOT EXISTS raw_events (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id  TEXT NOT NULL,
@@ -52,13 +48,27 @@ process.stdin.on('end', () => {
         hook_type   TEXT NOT NULL,
         tool_name   TEXT,
         payload     TEXT NOT NULL,
-        processed   INTEGER DEFAULT 0
-      );
-      CREATE INDEX IF NOT EXISTS idx_raw_events_processed
-        ON raw_events(processed);
-      CREATE INDEX IF NOT EXISTS idx_raw_events_session
-        ON raw_events(session_id);
+        status      TEXT DEFAULT 'pending',
+        claimed_at  TEXT,
+        retry_count INTEGER DEFAULT 0
+      )
     `);
+
+    // Migrate from old schema (processed column) if needed
+    const cols = db.prepare(`PRAGMA table_info(raw_events)`).all();
+    const hasProcessed = cols.some(c => c.name === 'processed');
+    const hasStatus = cols.some(c => c.name === 'status');
+
+    if (hasProcessed && !hasStatus) {
+      db.run(`ALTER TABLE raw_events ADD COLUMN status TEXT DEFAULT 'pending'`);
+      db.run(`ALTER TABLE raw_events ADD COLUMN claimed_at TEXT`);
+      db.run(`ALTER TABLE raw_events ADD COLUMN retry_count INTEGER DEFAULT 0`);
+      db.run(`UPDATE raw_events SET status = 'done' WHERE processed = 1`);
+      db.run(`UPDATE raw_events SET status = 'pending' WHERE processed = 0`);
+    }
+
+    db.run(`CREATE INDEX IF NOT EXISTS idx_raw_events_status ON raw_events(status)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_raw_events_session ON raw_events(session_id)`);
 
     const stmt = db.prepare(`
       INSERT INTO raw_events (session_id, timestamp, hook_type, tool_name, payload)
