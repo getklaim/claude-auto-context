@@ -4,6 +4,6 @@
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
-cat | node "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" PostToolUse
+cat | bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" PostToolUse
 
 exit 0

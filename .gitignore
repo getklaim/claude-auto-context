@@ -11,6 +11,7 @@ docs/.pdca-status.json
 # Auto Context runtime
 node_modules/
 .claude-auto-context/db/
+.claude-auto-context/worker.lock
 
 # Reference repos (local only)
 research/reference/

@@ -1,12 +1,13 @@
 #!/bin/bash
-# Setup Hook — install dependencies
+# Setup Hook — ensure Bun runtime is available
 # Runs once when plugin is first loaded
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-
-# Install dependencies if node_modules missing or package.json changed
-if [ ! -d "$PLUGIN_ROOT/node_modules" ] || [ "$PLUGIN_ROOT/package.json" -nt "$PLUGIN_ROOT/node_modules/.package-lock.json" ]; then
-  cd "$PLUGIN_ROOT" && npm install --production --silent 2>/dev/null
+# Check if bun is installed
+if ! command -v bun &> /dev/null; then
+  # Auto-install Bun
+  curl -fsSL https://bun.sh/install | bash 2>/dev/null
+  export BUN_INSTALL="$HOME/.bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 
 exit 0

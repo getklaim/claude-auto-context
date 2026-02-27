@@ -2,8 +2,5 @@
   "name": "claude-auto-context",
   "version": "1.0.0",
   "type": "module",
-  "private": true,
-  "dependencies": {
-    "better-sqlite3": "^11.0.0"
-  }
+  "private": true
 }
