@@ -8,15 +8,7 @@ Think of it as "organizational scar tissue" — but automated.
 
 It starts the moment you open a Claude Code session. Every tool call — every `Glob`, `Read`, `Edit`, `Bash` — gets silently captured and stored in a local SQLite database. No filtering, no analysis at capture time. Just raw events.
 
-When your session ends, a background worker wakes up. It analyzes the accumulated events across sessions and looks for patterns:
-
-- **Navigability** — How many searches does Claude need to find the right file? If it takes 5 `Glob` calls to reach `auth/controller.ts`, your project structure has a navigability problem.
-- **Readability** — Claude reads 245 lines but only edits 10? That file has a 4% signal ratio. It should probably be split.
-- **Predictability** — Does Claude keep re-reading files to verify patterns? That means your codebase isn't self-documenting.
-- **Conventions** — `try-catch` → `Result` type conversion appears in 5 sessions? That's an unwritten rule that should be codified.
-- **Anti-patterns** — Test command fails, then succeeds with `--filter=unit`? That's implicit knowledge that belongs in CLAUDE.md.
-
-The worker doesn't just document these findings — it acts on them:
+When your session ends, a background worker wakes up. It analyzes the accumulated events across sessions and looks for patterns — conventions, anti-patterns, implicit knowledge — and acts on them:
 
 1. **Rules files** (`.claude/rules/*.md`) are auto-generated from repeated patterns. These load automatically when Claude touches matching files.
 2. **CLAUDE.md updates** are made for project-wide implicit knowledge like non-obvious build commands.
@@ -50,11 +42,7 @@ Or open the interactive plugin manager with `/plugin`, navigate to the **Marketp
 
 ### Verify Installation
 
-Start a new Claude Code session. The setup hook will auto-install dependencies. Then check:
-
-```
-/cac-status
-```
+Start a new Claude Code session. The setup hook will auto-install dependencies. The background worker will automatically analyze your sessions — no manual verification needed.
 
 ### Updating
 
@@ -80,11 +68,8 @@ All hooks execute in under 100ms. You never notice them.
 
 | Command | Purpose |
 |---------|---------|
-| `/cac-status` | Dashboard: 5-dimension scores, active conventions, pending offers |
-| `/cac-apply` | Review and apply structural offers one by one |
+| `/cac-apply {offer-id}` | Review and apply a specific structural offer |
 | `/cac-apply-all` | Apply all pending offers sequentially |
-| `/cac-dismiss` | Reject an offer with reason (worker learns from rejections) |
-| `/cac-report` | Generate cumulative analysis report across N sessions |
 
 ### What the Worker Produces
 
@@ -107,7 +92,7 @@ Rules files are scoped by glob pattern. Claude loads them automatically when it 
   002-unify-route-patterns.md ← "routes/ uses 3 different patterns → standardize"
 ```
 
-Each offer includes the problem, proposed fix, evidence from specific sessions, and predicted score improvement.
+Each offer includes the problem, proposed fix, and evidence from specific sessions.
 
 ## Architecture
 
@@ -132,9 +117,14 @@ Main Claude Session
                                              ▼
                                       ┌──────────────┐
                                       │  Background  │
-                                      │   Worker     │──► .claude/rules/ (auto)
-                                      │              │──► CLAUDE.md (auto)
-                                      │              │──► offers/ (pending)
+                                      │   Worker     │
+                                      │              │
+                                      │ ┌──────────┐ │
+                                      │ │Rules Agent│─┼─► .claude/rules/ (auto)
+                                      │ │Offer Agent│─┼─► offers/ (pending)
+                                      │ │ ClaudeMD  │─┼─► CLAUDE.md (auto)
+                                      │ └──────────┘ │
+                                      │(3 sub-agents)│
                                       └──────────────┘
 ```
 
@@ -172,23 +162,9 @@ The SQLite database contains three tables:
 |-------|---------|
 | `raw_events` | Every hook event, unprocessed. The source of truth. |
 | `sessions` | Worker-generated session summaries (task type, files touched, patterns found) |
-| `insights` | Cumulative analysis results (conventions, navigability issues, structure suggestions) |
+| `insights` | Cumulative analysis results (conventions, structure suggestions) |
 
 The `db/` directory is gitignored — it's machine-local runtime data. Rules files and offers are committed.
-
-## The 5 Dimensions
-
-Auto-Context measures your project's "Claude-friendliness" across 5 dimensions:
-
-| Dimension | What it measures | Source |
-|-----------|-----------------|--------|
-| **Navigability** | Average searches to reach target file | Glob, Grep events |
-| **Readability** | Lines read vs. lines actually edited | Read, Edit events |
-| **Predictability** | Extra verification reads on similar files | Read event patterns |
-| **Self-documentation** | Recurring exploration patterns across sessions | Cross-session Glob/Grep comparison |
-| **Isolation** | Directories touched per task | Read event path distribution |
-
-Each dimension gets a score. Offers target the lowest-scoring dimensions.
 
 ## Philosophy
 
@@ -221,7 +197,9 @@ claude-auto-context/
 ├── .claude-auto-context/
 │   └── collector.mjs          # JSON → SQLite relay
 ├── docs/
-│   └── architecture.md        # Full architecture doc
+│   ├── architecture.md        # Architecture overview
+│   ├── hook-collection.md     # Hook Collection + SQL Storage
+│   └── background-worker.md   # Background Worker
 ├── package.json               # Dependencies (better-sqlite3)
 └── README.md
 ```
@@ -229,13 +207,13 @@ claude-auto-context/
 ## Roadmap
 
 - [x] Hook → Collector → SQLite pipeline
-- [ ] Background worker (session analysis, pattern extraction)
-- [ ] Auto-generated `.claude/rules/` from conventions
-- [ ] Offers system for structural suggestions
-- [ ] `/cac-status` dashboard
+- [x] SQLite polling worker (Claim-Confirm queue pattern)
+- [ ] 3 sub-agent architecture (Rules Agent, Offer Agent, CLAUDE.md Agent)
+- [ ] Bulk prompt construction from SQLite data
+- [ ] Auto-generated `.claude/rules/` from conventions (Rules Agent)
+- [ ] Offers system for structural suggestions (Offer Agent)
+- [ ] CLAUDE.md auto-update for implicit knowledge (CLAUDE.md Agent)
 - [ ] `/cac-apply` offer review and application
-- [ ] `/cac-report` cumulative analysis
-- [ ] CLAUDE.md auto-update for implicit knowledge
 - [ ] Convention decay (auto-remove stale rules)
 
 ## Want the Easy Version?

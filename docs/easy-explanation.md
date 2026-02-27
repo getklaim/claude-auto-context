@@ -89,35 +89,28 @@ This "analysis AI" only observes. It never touches code or modifies files. Think
 
 #### How is the analysis AI created?
 
-It uses the `query()` function from `@anthropic-ai/claude-code` to spin up another Claude. This Claude runs as a separate process.
+It uses the `query()` function from `@anthropic-ai/claude-code` to spin up **3 separate Claudes** — each with a different job. All the diary data gets fed to each one in a single big prompt (bulk prompt).
 
 ```
-query() call
+Worker collects all diary entries
   │
-  ├── Find the Claude binary
-  ├── Set the model (claude-sonnet-4-5)
-  ├── Spawn a Claude subprocess    ← Firing up a whole new Claude!
-  │     └── Feed it messages one by one (AsyncIterator)
-  │     └── Claude responds in XML
-  └── Parse the response and save to DB
+  ├── Build one big prompt with everything
+  │
+  ├── query() #1 → Rules Agent     ← "Find coding patterns"
+  │                  └── Creates .claude/rules/ files
+  │
+  ├── query() #2 → Offer Agent     ← "Find structural problems"
+  │                  └── Creates offer files in offers/
+  │
+  └── query() #3 → CLAUDE.md Agent ← "Find project-wide knowledge"
+                     └── Updates CLAUDE.md
 ```
 
 Key characteristics:
-- **All tools disabled** — no file reading, writing, searching, or terminal access. Observation only.
-- **Session continuity** — starts fresh the first time, then resumes previous context from the second time onward.
-- **Zombie prevention** — if the analysis AI hangs, it's force-killed after 5 seconds. Orphan processes are cleaned up every 5 minutes.
-
-#### What does the analysis AI look at?
-
-It measures 5 things:
-
-| Metric | Plain English |
-|--------|--------------|
-| **Navigability** | How many searches does it take to find the right file? |
-| **Readability** | Read 100 lines but only edited 3? That's 97 lines of noise. |
-| **Predictability** | If similar files require constant re-checking, the code isn't self-documenting. |
-| **Self-documentation** | If the same thing is searched for over and over, documentation is lacking. |
-| **Isolation** | If fixing one thing means looking at 10 different places, things are too tangled. |
+- **3 sub-agents, 3 jobs** — each agent focuses on one type of output. This keeps them simple and accurate.
+- **Bulk prompt** — all accumulated data is fed at once, so the AI can spot cross-session patterns (e.g., "this happened 5 sessions in a row").
+- **Minimal tools** — each agent only gets the file tools it needs (Read, Write, Edit). No terminal access, no web access.
+- **Run once and exit** — each agent starts, does its job, and the process exits. No long-running sessions to manage.
 
 ### Stage 3: Improving (Output)
 
