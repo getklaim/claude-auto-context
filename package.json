@@ -2,5 +2,8 @@
   "name": "claude-auto-context",
   "version": "1.0.0",
   "type": "module",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.62"
+  }
 }

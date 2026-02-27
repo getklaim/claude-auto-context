@@ -38,6 +38,7 @@ process.stdin.on('end', () => {
 
     const db = new Database(dbPath);
     db.run('PRAGMA journal_mode = WAL');
+    db.run('PRAGMA busy_timeout = 2000');
 
     // Create table if missing — Claim-Confirm queue schema
     db.run(`
