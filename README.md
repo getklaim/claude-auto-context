@@ -37,7 +37,7 @@ Add the marketplace:
 Install the plugin:
 
 ```
-/plugin install claude-auto-context@auto-context-marketplace
+/plugin install claude-auto-context@claude-auto-context-marketplace
 ```
 
 Or open the interactive plugin manager with `/plugin`, navigate to the **Marketplaces** tab to add the marketplace, then switch to **Discover** to install.
@@ -59,7 +59,7 @@ Start a new Claude Code session. The setup hook will auto-install dependencies. 
 ### Updating
 
 ```
-/plugin update claude-auto-context@auto-context-marketplace
+/plugin update claude-auto-context@claude-auto-context-marketplace
 ```
 
 ## The Core Workflow
@@ -160,7 +160,7 @@ All runtime data lives in `.claude-auto-context/` in your project root:
 .claude-auto-context/
 ├── collector.mjs          # Hook → SQLite relay
 ├── db/
-│   └── auto-context.db    # SQLite (raw_events, sessions, insights)
+│   └── claude-auto-context.db    # SQLite (raw_events, sessions, insights)
 └── offers/
     ├── 001-split-utils.md        # pending
     └── 002-unify-routes.md       # pending

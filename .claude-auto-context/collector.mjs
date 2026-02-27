@@ -17,7 +17,7 @@ if (!hookType) {
 // DB path: .claude-auto-context/db/ inside the project that uses this plugin
 const projectRoot = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const dbDir = resolve(projectRoot, '.claude-auto-context', 'db');
-const dbPath = resolve(dbDir, 'auto-context.db');
+const dbPath = resolve(dbDir, 'claude-auto-context.db');
 
 // Read JSON from stdin
 const chunks = [];

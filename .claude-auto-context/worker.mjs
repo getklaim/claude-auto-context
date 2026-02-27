@@ -9,7 +9,7 @@ import { resolve } from 'path';
 
 const projectRoot = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const dbDir = resolve(projectRoot, '.claude-auto-context', 'db');
-const dbPath = resolve(dbDir, 'auto-context.db');
+const dbPath = resolve(dbDir, 'claude-auto-context.db');
 const lockPath = resolve(projectRoot, '.claude-auto-context', 'worker.lock');
 const logPath = resolve(dbDir, 'worker.log');
 

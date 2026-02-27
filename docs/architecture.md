@@ -197,7 +197,7 @@ process.stdin.on('end', () => {
   const raw = Buffer.concat(chunks).toString();
   const payload = JSON.parse(raw);
 
-  const db = new Database('.claude-auto-context/db/auto-context.db');
+  const db = new Database('.claude-auto-context/db/claude-auto-context.db');
   db.prepare(`
     INSERT INTO raw_events (session_id, timestamp, hook_type, tool_name, payload)
     VALUES (?, datetime('now'), ?, ?, ?)
@@ -684,7 +684,7 @@ Worker가 Navigability/Readability 문제를 감지하면 **구조 변경을 직
     002-unify-route-patterns.md ← 대기 중
     003-add-build-cmd.md        ← 적용됨 (applied)
   db/
-    auto-context.db             ← SQLite
+    claude-auto-context.db             ← SQLite
 ```
 
 #### Offer 파일 형식
@@ -826,7 +826,7 @@ src/utils.ts의 신호 비율이 4%입니다 (10세션 중 8세션에서 Read, �
 │       001-split-utils.md          │                                   │
 │       002-unify-routes.md         │                                   │
 │     db/                           │                                   │
-│       auto-context.db ◄───────────┼────────────────────┐             │
+│       claude-auto-context.db ◄───────────┼────────────────────┐             │
 │                                   │                    │             │
 │   User: "인증 버그 고쳐줘"         │                    │             │
 │     │                             │                    │             │
@@ -873,7 +873,7 @@ project/
 │   │   ├── 001-split-utils.md       (pending)
 │   │   └── 002-unify-routes.md      (pending)
 │   └── db/
-│       └── auto-context.db      ← SQLite (raw_events, sessions, insights)
+│       └── claude-auto-context.db      ← SQLite (raw_events, sessions, insights)
 ├── CLAUDE.md                    ← Worker가 최소한만 갱신
 └── src/
     └── ...
