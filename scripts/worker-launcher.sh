@@ -3,8 +3,9 @@
 # Uses lock file to guarantee single instance.
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-LOCK_FILE="$PLUGIN_ROOT/.claude-auto-context/worker.lock"
-LOG_DIR="$PLUGIN_ROOT/.claude-auto-context/db"
+PROJECT_DIR="${1:-$PLUGIN_ROOT}"
+LOCK_FILE="$PROJECT_DIR/.claude-auto-context/worker.lock"
+LOG_DIR="$PROJECT_DIR/.claude-auto-context/db"
 LOG_FILE="$LOG_DIR/worker.log"
 
 # Ensure log directory exists
@@ -22,7 +23,7 @@ if [ -f "$LOCK_FILE" ]; then
 fi
 
 # Launch worker in background
-export CLAUDE_PROJECT_DIR="$PLUGIN_ROOT"
+export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 nohup bun "$PLUGIN_ROOT/.claude-auto-context/worker.mjs" >> "$LOG_FILE" 2>&1 &
 
 exit 0
