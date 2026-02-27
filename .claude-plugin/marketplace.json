@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "claude-auto-context",
-      "source": ".",
+      "source": "./",
       "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
       "version": "1.0.0",
       "author": {
