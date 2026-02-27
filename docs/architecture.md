@@ -222,7 +222,9 @@ CREATE TABLE raw_events (
     hook_type   TEXT NOT NULL,  -- 'PostToolUse' | 'Stop'
     tool_name   TEXT,           -- 'Glob' | 'Read' | 'Edit' | 'Bash' | NULL(Stop)
     payload     TEXT NOT NULL,  -- JSON, 가공 없는 원본
-    processed   INTEGER DEFAULT 0
+    status      TEXT DEFAULT 'pending',  -- 'pending' | 'processing' | 'done'
+    claimed_at  TEXT,           -- Worker가 claim한 시점 (self-healing 타임아웃 기준)
+    retry_count INTEGER DEFAULT 0  -- 최대 3회, 초과 시 'dead' 상태로 전환
 );
 
 -- Worker가 분석한 세션 요약
@@ -256,6 +258,235 @@ CREATE TABLE insights (
 
 ## Background Worker
 
+### 아키텍처 결정: Polling Worker vs HTTP Server
+
+Worker 아키텍처로 **SQLite Polling**을 선택했다. 대안인 HTTP Server (claude-mem 방식)와의 비교 근거를 아래에 기록한다.
+
+#### 비교 대상
+
+| | Polling Worker (채택) | HTTP Server (기각) |
+|--|---|---|
+| **구조** | Hook → collector.mjs → SQLite ← Worker polls | Hook → HTTP POST → Server → SQLite |
+| **통신** | 공유 SQLite 파일 | localhost TCP (port 37777 등) |
+| **레퍼런스** | 본 프로젝트 설계 원안 | claude-mem 플러그인 |
+
+#### 선택 근거
+
+**1. Hook 오버헤드 최소화 (가장 중요)**
+
+Hook은 Claude Code 세션을 블로킹한다. Polling 방식은 Hook이 SQLite INSERT 후 즉시 exit하므로 ~60-120ms로 끝난다. HTTP 방식은 서버 가용성 확인(헬스체크)이 추가되어 서버 미기동 시 수 초가 걸릴 수 있다.
+
+**2. 설계상 이벤트 유실 제로**
+
+Polling에서는 이벤트가 먼저 SQLite에 영속되므로, Worker가 죽어도 `processed=0`으로 남아있다. 재시작하면 이어서 처리한다. HTTP 방식은 서버 다운 시 이벤트가 유실되며, claude-mem은 이 문제를 해결하려고 `pending_messages` 테이블(내구성 큐)을 만들었다 — 결국 Polling 패턴의 재발명이다.
+
+**3. 복잡도 차이 (10배 이상)**
+
+| | Polling | HTTP Server |
+|--|---|---|
+| 신규 코드 | ~150줄 (worker.mjs) | ~2,000줄+ (인프라 코드) |
+| 프로세스 관리 | `bun worker.mjs &` + SIGTERM | PID 파일, 헬스체크, 오펀 리퍼, 그레이스풀 셧다운 |
+| 포트 충돌 | 불가능 (네트워크 안 씀) | 실제 문제 |
+| 디버깅 | `SELECT * FROM raw_events WHERE processed=0` | HTTP 상태 + DB 상태 + 프로세스 상태 동시 확인 |
+
+claude-mem은 HTTP 서버를 선택한 결과 ProcessManager(809줄), GracefulShutdown(131줄), HealthMonitor(175줄), 17+ 마이그레이션, Windows 전용 우회 등 데몬 관리 코드가 비즈니스 로직을 압도하게 되었다.
+
+**4. 배치 분석에 자연스러운 핏**
+
+Worker의 목적은 "도구 사용 패턴 분석 → 컨벤션 추출"이다. 이는 여러 이벤트를 세션별로 묶어서 보는 배치 처리에 적합하다. Polling은 깨어날 때마다 미처리 건을 배치로 가져오므로 자연스럽다. HTTP 방식은 이벤트 단위 처리가 기본이라 배치 분석을 위해 내부 버퍼링을 별도 구현해야 한다.
+
+**5. HTTP Server가 이기는 유일한 시나리오**
+
+Hook이 Worker의 동기 응답을 현재 세션에 즉시 주입해야 할 때. 하지만 본 프로젝트는 rules 파일과 offers를 비동기로 생성하여 다음 세션에 반영하는 구조이므로 해당하지 않는다.
+
+#### AI 백엔드: Claude Agent SDK 서브프로세스
+
+Worker의 AI 분석에는 `@anthropic-ai/claude-code` (Claude Agent SDK)를 사용한다. SDK의 `query()` 함수가 **Claude Code를 서브프로세스로 실행**하고, Worker는 관찰자(Observer) 역할로 사용자의 도구 사용을 분석한다.
+
+**왜 Agent SDK인가:**
+
+| | Anthropic API SDK (`@anthropic-ai/sdk`) | Agent SDK (`@anthropic-ai/claude-code`) |
+|--|---|---|
+| 도구 실행 | 직접 구현 | 내장 루프 |
+| 비대화형 실행 | 불가 | `bypassPermissions` |
+| 세션 연속성 | 불가 | `resume` 파라미터 |
+| 프롬프트 입력 | string | string \| **AsyncIterableIterator** |
+
+**전체 구조:**
+
+```
+SDKAgent.startSession()
+      │
+      ├── 1. Claude 실행 파일 찾기 (findClaudeExecutable)
+      ├── 2. 모델 ID 로드 (claude-sonnet-4-5)
+      ├── 3. 동시 실행 슬롯 대기 (기본 2개)
+      ├── 4. query() 호출 → Claude 서브프로세스 생성
+      │         ├── messageGenerator (AsyncIterableIterator)가 메시지를 공급
+      │         └── Claude가 XML 응답 반환
+      ├── 5. 응답 파싱 + DB 저장 + Chroma 동기화
+      └── 6. 서브프로세스 정리
+```
+
+##### 1. query() — Agent SDK의 핵심 함수
+
+`@anthropic-ai/claude-code`에서 import한 `query()` 함수가 Claude Code를 서브프로세스로 실행한다:
+
+```typescript
+import { query } from "@anthropic-ai/claude-code";
+
+const queryResult = query({
+  prompt: messageGenerator,        // AsyncIterator — 메시지를 하나씩 공급
+  options: {
+    model: modelId,                // 'claude-sonnet-4-5' (설정에서 변경 가능)
+    cwd: OBSERVER_SESSIONS_DIR,    // 관찰자 전용 디렉토리 (사용자 세션과 격리)
+    resume: session.memorySessionId, // 세션 재개 (2번째 프롬프트부터)
+    disallowedTools: [모든 도구],    // 관찰자 = 도구 사용 불가
+    abortController,               // 중단 제어
+    pathToClaudeCodeExecutable,    // claude 바이너리 경로
+    spawnClaudeCodeProcess,        // 커스텀 spawn (PID 추적용)
+    env: isolatedEnv               // 격리된 환경변수
+  }
+});
+```
+
+이벤트 드리븐 방식으로, 폴링이 아니라 `for await` 루프로 SDK 응답을 순차 처리한다:
+
+```typescript
+for await (const message of queryResult) {
+  // message.type === 'assistant' → AI 응답 처리
+  // message.type === 'result'    → 완료 신호
+}
+```
+
+##### 2. 메시지 제너레이터 — AI에게 무엇을 보내는가
+
+`createMessageGenerator()`는 AsyncIterableIterator로, 도구 사용이 발생할 때마다 AI에게 메시지를 공급한다:
+
+| 프롬프트 | 함수 | 내용 |
+|---------|------|------|
+| #1 (초기화) | `buildInitPrompt()` | 시스템 정체성 + 관찰자 역할 + XML 출력 형식 정의 |
+| #2+ (계속) | `buildContinuationPrompt()` | 세션 컨텍스트 유지하면서 계속 관찰 |
+| 도구 관찰 | `buildObservationPrompt()` | `<what_happened>`, `<parameters>`, `<outcome>` |
+| 세션 종료 | `buildSummaryPrompt()` | request, investigated, learned, completed, next_steps 추출 |
+
+```typescript
+// createMessageGenerator() — 비동기 이터레이터
+async function* createMessageGenerator(session: Session) {
+  // 프롬프트 #1: 초기화
+  yield buildInitPrompt();
+
+  // 도구 관찰 메시지: 큐에 쌓인 이벤트를 하나씩 yield
+  while (session.isActive) {
+    const event = await session.queue.dequeue();
+    if (event) {
+      yield buildObservationPrompt(event);
+      // 예: <what_happened>Read</what_happened>
+      //     <parameters>{파일경로}</parameters>
+      //     <outcome>{파일 내용 요약}</outcome>
+    }
+  }
+
+  // 세션 종료 시 요약 요청
+  yield buildSummaryPrompt();
+}
+```
+
+##### 3. 관찰자 전용 제한 — 모든 도구 비활성화
+
+```typescript
+const disallowedTools = [
+  'Bash', 'Read', 'Write', 'Edit', 'Grep', 'Glob',
+  'WebFetch', 'WebSearch', 'Task', 'NotebookEdit',
+  'AskUserQuestion', 'TodoWrite'
+];
+```
+
+Worker의 Claude 서브프로세스는 **순수 관찰자**다. 사용자의 작업을 관찰하고 구조화된 분석을 생성하는 것이 유일한 역할이므로, 모든 도구가 비활성화되어 있다. 무한 루프나 의도치 않은 파일 변경을 원천 차단한다.
+
+##### 4. 세션 재개 로직 (Resume)
+
+```typescript
+const shouldResume = hasRealMemorySessionId       // memorySessionId 존재
+                   && session.lastPromptNumber > 1  // 첫 프롬프트가 아님
+                   && !session.forceInit;           // 강제 초기화 아님
+```
+
+| 상황 | 동작 |
+|------|------|
+| 프롬프트 #1 | 항상 새 SDK 세션 시작 (`memorySessionId` 캡처) |
+| 프롬프트 #2+ | 기존 세션 재개 (`resume: memorySessionId`) |
+| Worker 재시작 | `forceInit=true`로 새 세션 강제 시작 (이전 SDK 컨텍스트 소실) |
+
+SDK가 `message.session_id`를 반환하면 즉시 DB에 기록한다.
+
+##### 5. 응답 처리 파이프라인 (ResponseProcessor)
+
+AI가 XML 응답을 반환하면 `processAgentResponse()`가 통합 처리한다:
+
+```
+AI 응답 텍스트
+  │
+  ├── parseObservations() → <observation> XML 블록 추출
+  ├── parseSummary()      → <summary> XML 블록 추출
+  │
+  ├── [DB] 원자적 트랜잭션으로 observations + summary 저장
+  ├── [Queue] CLAIM-CONFIRM 패턴으로 처리된 메시지 확인
+  │
+  ├── [Chroma] 벡터 임베딩 동기화 (fire-and-forget)
+  ├── [SSE] 실시간 브로드캐스트 (선택적)
+  └── [Rules/CLAUDE.md] 컨텍스트 파일 업데이트
+```
+
+**Worker 응답 포맷 — XML 스키마:**
+
+```xml
+<observation>
+  <what_happened>Edit</what_happened>
+  <parameters>{"file": "src/auth/ctrl.ts"}</parameters>
+  <outcome>try-catch를 Result 타입으로 변환</outcome>
+  <pattern confidence="0.85">Result type error handling</pattern>
+</observation>
+
+<summary>
+  <request>auth 버그 수정 — JWT 만료 처리</request>
+  <investigated>src/auth/ctrl.ts, src/auth/types.ts</investigated>
+  <learned>auth/ 디렉토리에서 try-catch 대신 Result 타입 사용 컨벤션</learned>
+  <completed>JWT 만료 시 자동 갱신 로직 추가</completed>
+  <next_steps>refresh token rotation 구현 필요</next_steps>
+</summary>
+```
+
+##### 6. 프로세스 관리 (ProcessRegistry)
+
+좀비 프로세스 방지를 위한 3중 안전장치:
+
+| 계층 | 메커니즘 | 설명 |
+|------|---------|------|
+| PID 추적 | `createPidCapturingSpawn()` | 커스텀 spawn으로 서브프로세스 PID 캡처 |
+| 종료 보장 | `ensureProcessExit()` | 5초 대기 후 SIGKILL 에스컬레이션 |
+| 고아 리퍼 | `startOrphanReaper()` | 5분마다 유휴/고아 프로세스 정리 |
+
+동시 실행은 기본 2개로 제한되며 (`MAX_CONCURRENT_AGENTS`), 풀이 가득 차면 프로미스 기반으로 슬롯이 빌 때까지 대기한다.
+
+##### 7. 토큰 추적
+
+```typescript
+session.cumulativeInputTokens += usage.input_tokens;
+session.cumulativeOutputTokens += usage.output_tokens;
+if (usage.cache_creation_input_tokens) {
+  session.cumulativeInputTokens += usage.cache_creation_input_tokens;
+}
+```
+
+각 응답마다 누적 토큰을 추적하고, `discoveryTokens` (이번 응답의 토큰 비용)를 계산해 메모리 압축 효율(ROI)을 측정한다.
+
+**단일 세션 유지의 이점:**
+- 세션이 살아있는 동안 이전 분석 컨텍스트가 유지됨 (누적 패턴 인식)
+- 이벤트마다 새 세션을 만드는 것보다 API 비용 절감
+- `resume` 파라미터로 Worker 재시작 시 이전 세션 이어받기 가능
+
+---
+
 ### 역할
 
 Worker는 Claude Code의 별도 프로세스로, SQLite를 polling하며 RAW 데이터를 분석한다.
@@ -263,15 +494,98 @@ Worker는 Claude Code의 별도 프로세스로, SQLite를 polling하며 RAW 데
 ### Polling 전략
 
 ```
-Worker (polling loop)
+Worker (AsyncGenerator polling loop)
 │
-├─► SQLite에서 processed=0 인 raw_events 조회
-├─► 있으면 → 분석 실행
-├─► 없으면 → sleep 후 재시도
+├─► Self-healing: stale processing (>60s) → pending 복귀
+├─► Claim: pending 이벤트 1건을 processing으로 원자적 전환
+│     ├─ 있으면 → yield (Claude에게 분석 프롬프트 전달)
+│     │           └─► Claude 응답 → processResult → Confirm (done)
+│     └─ 없으면 → sleep 30초
+├─► Idle 5분 초과 → Generator 종료 → Worker exit
 └─► 반복
 ```
 
 Worker는 Main Session과 완전히 독립적이다. Main Session이 끝나도 Worker는 계속 돌면서 미처리 이벤트를 소화한다.
+
+### Claim-Confirm 큐 패턴
+
+단순한 `processed=0/1` 플래그 대신 Claim-Confirm 패턴을 사용한다. claude-mem의 큐 설계에서 가져온 패턴이되, HTTP 서버 없이 SQLite polling에 맞게 적용한다.
+
+```
+상태 전이:
+
+pending ──claim──► processing ──confirm──► done
+   ▲                   │
+   └───self-heal───────┘  (60초 초과 시 자동 복구)
+                        │
+                        └──3회 초과──► dead (영구 실패)
+```
+
+**Claim (원자적 상태 전환):**
+
+```sql
+-- Worker가 미처리 이벤트를 가져갈 때
+UPDATE raw_events
+SET status = 'processing', claimed_at = datetime('now')
+WHERE id = (
+  SELECT id FROM raw_events
+  WHERE status = 'pending'
+  ORDER BY id ASC
+  LIMIT 1
+)
+RETURNING *;
+```
+
+**Confirm (성공 후):**
+
+```sql
+UPDATE raw_events SET status = 'done' WHERE id = ?;
+```
+
+**Self-healing (크래시 복구):**
+
+```sql
+-- claim 전에 매번 실행: 60초 이상 processing인 이벤트를 자동 복구
+UPDATE raw_events
+SET status = 'pending',
+    claimed_at = NULL,
+    retry_count = retry_count + 1
+WHERE status = 'processing'
+  AND claimed_at < datetime('now', '-60 seconds');
+
+-- 3회 초과 실패는 dead로 전환 (무한 루프 방지)
+UPDATE raw_events
+SET status = 'dead'
+WHERE retry_count > 3 AND status = 'pending';
+```
+
+별도 타이머 없이 Worker가 다음 메시지를 claim할 때마다 stale 메시지를 자동 복구한다. Worker가 크래시하더라도 다음 기동 시 미처리 이벤트를 이어서 소화한다.
+
+### Worker 생명주기
+
+```
+Stop Hook 실행
+│
+├─► collector.mjs: Stop 이벤트 SQLite INSERT (기존)
+│
+└─► worker-launcher.sh: Worker 기동 시도
+      │
+      ├─► Lock 파일 확인 (.claude-auto-context/worker.lock)
+      │     ├─ 없음 → Worker 시작, Lock 생성
+      │     └─ 있음 → PID 살아있는지 확인
+      │              ├─ 살아있음 → 아무것도 안 함 (이미 돌고 있음)
+      │              └─ 죽어있음 → Lock 제거 후 Worker 시작
+      │
+      └─► Worker (bun worker.mjs &)
+            ├─ 백그라운드 실행 (nohup)
+            ├─ Lock 파일에 PID 기록
+            ├─ polling loop 진입
+            └─ 미처리 이벤트 0건 + idle 5분 → 자동 종료 (Lock 제거)
+```
+
+**시작 조건**: Stop hook이 매 세션 종료 시 Worker 기동을 시도. 이미 돌고 있으면 무시.
+**종료 조건**: 미처리 이벤트 0건 상태가 5분 지속되면 자동 종료. 다음 세션 종료 시 다시 기동.
+**다중 세션**: Lock 파일로 단일 인스턴스 보장. 여러 세션이 동시에 Stop해도 Worker는 하나만 뜬다.
 
 ### 처리 단계
 
@@ -577,7 +891,7 @@ project/
 | CLAUDE.md 최소화 | Informativity over Exhaustiveness |
 | Hook은 RAW만 수집 | Hook에서 분석하면 레이턴시 + 단일 실패점 |
 | Worker가 모든 분석 | Context Isolation — 분석은 별도 컨텍스트에서 |
-| Worker는 polling | Main Session과 완전 독립 — 세션 종료 후에도 미처리 이벤트 소화 |
+| Worker는 polling (HTTP Server 기각) | Main Session과 완전 독립 — 이벤트 유실 제로, 포트 충돌 없음, 인프라 코드 10배 절감. 상세 비교는 "아키텍처 결정" 섹션 참고 |
 | 구조 변경은 offers로 | 자동 적용 아님 — 사용자가 /cac-apply로 명시적 승인 후 실행 |
 | /cac-* 스킬로 적용 | Claude가 offer 읽고 자동 리팩토링 — 사람이 수동으로 안 해도 됨 |
 | 자동 convention 추출 | 코드에서 발견 불가능한 것만 rules로 명문화 |

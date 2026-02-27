@@ -238,6 +238,13 @@ claude-auto-context/
 - [ ] CLAUDE.md auto-update for implicit knowledge
 - [ ] Convention decay (auto-remove stale rules)
 
+## Want the Easy Version?
+
+If the above feels too technical, check out the plain-language walkthrough — using analogies instead of jargon:
+
+- [English](docs/easy-explanation.md)
+- [한국어](docs/easy-explanation-ko.md)
+
 ## Contributing
 
 Contributions welcome. The codebase is intentionally simple — shell scripts for hooks, one Node.js collector, and SQLite for storage.
