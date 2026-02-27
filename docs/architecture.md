@@ -138,6 +138,7 @@ Hook은 **받아서 던지기만** 한다. 판단, 분석, 요약 없음.
 
 | Hook | 수집하는 RAW 데이터 |
 |------|-------------------|
+| UserPromptSubmit | 사용자 입력 프롬프트 원문, 세션 ID |
 | PostToolUse: Glob | 검색 패턴, 결과 파일 목록, 결과 수 |
 | PostToolUse: Grep | 검색어, 매칭 파일 목록, 매칭 수 |
 | PostToolUse: Read | 파일 경로, 총 줄 수 |
@@ -219,7 +220,7 @@ CREATE TABLE raw_events (
     id          INTEGER PRIMARY KEY,
     session_id  TEXT NOT NULL,
     timestamp   TEXT NOT NULL,
-    hook_type   TEXT NOT NULL,  -- 'PostToolUse' | 'Stop'
+    hook_type   TEXT NOT NULL,  -- 'PostToolUse' | 'Stop' | 'UserPromptSubmit'
     tool_name   TEXT,           -- 'Glob' | 'Read' | 'Edit' | 'Bash' | NULL(Stop)
     payload     TEXT NOT NULL,  -- JSON, 가공 없는 원본
     status      TEXT DEFAULT 'pending',  -- 'pending' | 'processing' | 'done'
@@ -719,6 +720,47 @@ src/utils.ts를 다음으로 분할:
 ## 점수 영향 (예상)
 Readability: 4.1 → 4.6 (+0.5)
 ```
+
+### UserPromptSubmit Hook — 사용자 프롬프트 수집
+
+UserPromptSubmit hook은 사용자가 프롬프트를 입력할 때마다 호출된다. 두 가지 역할을 수행한다:
+
+1. **프롬프트 DB 저장**: 사용자 입력 프롬프트 원문을 SQLite `raw_events` 테이블에 저장
+2. **Offer 알림 주입**: pending offer가 있으면 알림을 응답에 주입 (기존 설계)
+
+#### 프롬프트 저장 흐름
+
+```
+사용자 프롬프트 입력
+  │
+  ▼
+UserPromptSubmit Hook (scripts/on-user-prompt-submit.sh)
+  │
+  ├─► stdin으로 받은 RAW JSON → collector.mjs UserPromptSubmit
+  │     └─► SQLite raw_events INSERT
+  │           ├─ hook_type: 'UserPromptSubmit'
+  │           ├─ tool_name: NULL
+  │           ├─ payload: { session_id, prompt, ... } (원본 그대로)
+  │           └─ status: 'pending'
+  │
+  └─► pending offers 확인 → 알림 주입 (별도 로직)
+```
+
+**왜 프롬프트를 저장하는가:**
+- Worker가 세션 분석 시 "사용자가 무엇을 요청했는가"를 알아야 패턴 추출이 정확해짐
+- Stop hook의 전체 대화 내역에도 프롬프트가 포함되지만, 개별 프롬프트를 실시간으로 저장하면 Worker가 세션 진행 중에도 부분 분석 가능
+- 프롬프트 빈도/패턴 분석으로 반복 요청 자동 탐지 (예: "테스트 돌려줘"가 매 세션 첫 프롬프트 → CLAUDE.md에 자동 명령 추가 제안)
+
+**저장되는 데이터:**
+
+| 필드 | 값 | 설명 |
+|------|---|------|
+| session_id | `$CLAUDE_SESSION_ID` | 현재 세션 식별자 |
+| hook_type | `'UserPromptSubmit'` | 이벤트 유형 |
+| tool_name | `NULL` | 도구 사용이 아님 |
+| payload | RAW JSON 원본 | 프롬프트 내용 포함 |
+
+**기존 collector.mjs를 그대로 사용한다** — collector는 이미 hook_type을 인자로 받아 범용적으로 INSERT하므로 변경 불필요. UserPromptSubmit이라는 새 hook_type 값만 들어올 뿐이다.
 
 #### Offer 알림
 
