@@ -8,7 +8,9 @@ import { Database } from 'bun:sqlite';
 import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { execSync } from 'child_process';
+
+// Prevent "cannot be launched inside another Claude Code session" error
+delete process.env.CLAUDECODE;
 
 const projectRoot = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const dbDir = resolve(projectRoot, '.claude-auto-context', 'db');
@@ -28,22 +30,6 @@ function log(msg) {
   const ts = new Date().toISOString();
   const line = `[${ts}] ${msg}\n`;
   try { appendFileSync(logPath, line); } catch {}
-}
-
-// --- Find Claude Executable ---
-
-function findClaudeExecutable() {
-  if (process.env.CLAUDE_CODE_PATH) {
-    if (!existsSync(process.env.CLAUDE_CODE_PATH))
-      throw new Error(`CLAUDE_CODE_PATH not found: ${process.env.CLAUDE_CODE_PATH}`);
-    return process.env.CLAUDE_CODE_PATH;
-  }
-  try {
-    return execSync('which claude', {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']
-    }).trim().split('\n')[0].trim();
-  } catch {}
-  throw new Error('Claude executable not found. Set CLAUDE_CODE_PATH or add claude to PATH.');
 }
 
 // --- Queue Operations ---
@@ -127,7 +113,6 @@ function buildBulkPrompt(events) {
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events) {
-  const claudePath = findClaudeExecutable();
   const bulkPrompt = buildBulkPrompt(events);
 
   const ac = new AbortController();
@@ -135,44 +120,46 @@ async function processBatch(events) {
 
   try {
     const result = query({
-      prompt: `${bulkPrompt}\n\nAnalyze the above data and delegate to the appropriate agents: extract conventions (rules-agent), detect structural issues (offer-agent), and update project-wide tacit knowledge (claudemd-agent).`,
+      prompt: `${bulkPrompt}
+
+You are an orchestrator. Analyze the above session data and delegate to the appropriate agents:
+1. Repeated conventions (2+ sessions) → rules-agent
+2. Structural issues (file bloat, misorganization) → offer-agent
+3. Missing tacit knowledge for CLAUDE.md → claudemd-agent
+Delegate to the appropriate agents. Do NOT do the work yourself.`,
       options: {
-        model: 'claude-sonnet-4-6',
+        model: 'sonnet',
         cwd: projectRoot,
         allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Task'],
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         abortController: ac,
-        pathToClaudeCodeExecutable: claudePath,
-        maxTurns: 10,
-        maxBudgetUsd: 0.50,
+        maxTurns: 15,
+        maxBudgetUsd: 1.00,
         persistSession: false,
-        settingSources: [],
+        settingSources: ['project'],
+        stderr: (data) => log(`[stderr] ${data}`),
         agents: {
           "rules-agent": {
-            description: "Convention과 암묵지를 추출하여 .claude/rules/ 에 rules 파일을 생성/갱신한다. 반복 패턴이 발견될 때 사용.",
-            prompt: `프로젝트의 세션 데이터를 분석하여 convention과 암묵지를 추출하고,
-.claude/rules/ 에 glob 스코핑된 rules 파일을 생성/갱신하라.
-기존 rules와 중복되지 않게 확인 후 작성.
-코드베이스를 읽어서 발견 가능한 정보는 추출하지 않는다.
-2개 이상 세션에서 반복된 패턴만 stable convention으로 인정한다.
-YAML frontmatter 형식: ---\nglobs: "src/auth/**"\n---`,
+            description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Use when repeated patterns are found across 2+ sessions.",
+            prompt: "Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.",
             tools: ['Read', 'Write', 'Edit', 'Glob'],
+            skills: ['extract-rules'],
+            maxTurns: 10,
           },
           "offer-agent": {
-            description: "구조적 문제를 감지하여 .claude-auto-context/offers/ 에 제안 파일을 생성한다. 파일 분할, 디렉토리 재구성 등 구조 변경이 필요할 때 사용.",
-            prompt: `프로젝트의 세션 데이터를 분석하여 구조적 문제를 감지하고,
-.claude-auto-context/offers/ 에 제안 파일을 생성하라.
-파일명 형식: {NNN}-{slug}.md (NNN은 순번).
-근거 세션과 수치를 반드시 포함.`,
+            description: "Detect structural issues and create proposal files in .claude-auto-context/offers/. Use when file splits, directory reorganization, or pattern changes are needed.",
+            prompt: "Follow the create-offer skill instructions precisely. Analyze the session data provided by the orchestrator and create offer files with quantitative evidence.",
             tools: ['Read', 'Write', 'Glob'],
+            skills: ['create-offer'],
+            maxTurns: 10,
           },
           "claudemd-agent": {
-            description: "비자명한 실행 방법과 프로젝트 전역 암묵지를 CLAUDE.md에 갱신한다. 매 세션 필요한 정보가 누락되었을 때 사용.",
-            prompt: `프로젝트의 세션 데이터를 분석하여 비자명한 실행 방법과
-프로젝트 전역 암묵지를 CLAUDE.md에 최소한만 추가/수정하라.
-코드에서 발견 가능한 정보는 추가하지 않는다.`,
+            description: "Update CLAUDE.md with non-obvious execution methods and project-wide tacit knowledge. Use when essential information is missing that every session needs.",
+            prompt: "Follow the update-claudemd skill instructions precisely. Analyze the session data and add minimal, high-value information to CLAUDE.md. Maximum 3 lines per update.",
             tools: ['Read', 'Edit'],
+            skills: ['update-claudemd'],
+            maxTurns: 10,
           },
         },
       }

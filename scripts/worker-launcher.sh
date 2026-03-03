@@ -23,7 +23,12 @@ if [ -f "$LOCK_FILE" ]; then
 fi
 
 # Launch worker in background
+# Unset CLAUDECODE to allow Agent SDK to spawn Claude Code subprocess
+# (otherwise it errors: "cannot be launched inside another Claude Code session")
 export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
+export HOME="${HOME:-$(eval echo ~$(whoami))}"
+export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+unset CLAUDECODE
 nohup bun "$PLUGIN_ROOT/.claude-auto-context/worker.mjs" >> "$LOG_FILE" 2>&1 &
 
 exit 0
