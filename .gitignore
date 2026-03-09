@@ -15,3 +15,5 @@ node_modules/
 
 # Reference repos (local only)
 research/reference/
+.DS_Store
+.omc/
