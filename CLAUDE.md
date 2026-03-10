@@ -50,3 +50,7 @@
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+
+## Plugin Version Sync
+- Plugin version must be identical in 3 files: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (both `.metadata.version` and `.plugins[0].version`), and `package.json`.
+- `scripts/bump-version.sh` syncs all 3 automatically on commit; if editing versions manually, update all 3 or the installed version shown in Claude Code will be wrong.
