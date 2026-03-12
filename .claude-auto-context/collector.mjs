@@ -55,19 +55,6 @@ process.stdin.on('end', () => {
       )
     `);
 
-    // Migrate from old schema (processed column) if needed
-    const cols = db.prepare(`PRAGMA table_info(raw_events)`).all();
-    const hasProcessed = cols.some(c => c.name === 'processed');
-    const hasStatus = cols.some(c => c.name === 'status');
-
-    if (hasProcessed && !hasStatus) {
-      db.run(`ALTER TABLE raw_events ADD COLUMN status TEXT DEFAULT 'pending'`);
-      db.run(`ALTER TABLE raw_events ADD COLUMN claimed_at TEXT`);
-      db.run(`ALTER TABLE raw_events ADD COLUMN retry_count INTEGER DEFAULT 0`);
-      db.run(`UPDATE raw_events SET status = 'done' WHERE processed = 1`);
-      db.run(`UPDATE raw_events SET status = 'pending' WHERE processed = 0`);
-    }
-
     db.run(`CREATE INDEX IF NOT EXISTS idx_raw_events_status ON raw_events(status)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_raw_events_session ON raw_events(session_id)`);
 
