@@ -2,55 +2,58 @@
 
 ### 1. Plan Node Default
 - Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately – don't keep pushing
+- If something goes sideways, STOP and re-plan immediately
 - Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
 
 ### 2. Subagent Strategy
 - Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One tack per subagent for focused execution
+- One task per subagent for focused execution
 
 ### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
+- After ANY correction: update `tasks/lessons.md` with the pattern
+- Write rules that prevent the same mistake
 
 ### 4. Verification Before Done
 - Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
 - Run tests, check logs, demonstrate correctness
 
 ### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes – don't over-engineer
-- Challenge your own work before presenting it
+- Non-trivial changes: pause and ask "is there a more elegant way?"
+- Skip this for simple, obvious fixes
 
 ### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests – then resolve them
+- When given a bug report: just fix it, don't ask for hand-holding
 - Zero context switching required from the user
-- Go fix failing CI tests without being told how
 
 ## Task Management
 
 1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+2. **Track Progress**: Mark items complete as you go
+3. **Capture Lessons**: Update `tasks/lessons.md` after corrections
 
 ## Core Principles
 
-- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
-- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+- **Simplicity First**: Make every change as simple as possible
+- **No Laziness**: Find root causes. No temporary fixes
+- **Minimal Impact**: Only touch what's necessary
 
 ## Plugin Version Sync
-- Plugin version must be identical in 3 files: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (both `.metadata.version` and `.plugins[0].version`), and `package.json`.
-- `scripts/bump-version.sh` syncs all 3 automatically on commit; if editing versions manually, update all 3 or the installed version shown in Claude Code will be wrong.
+- Version must match in 3 files: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `package.json`
+- `scripts/bump-version.sh` syncs all 3 on commit via PreToolUse hook (not git pre-commit hook)
+
+## Offers System
+- Detection: `scripts/on-user-prompt-submit.sh` greps `^applied$` (bare word, not `## Status: applied`)
+- Offer format: `## Status\npending` / `## Status\napplied`
+
+## Worker Runtime
+- Canonical DB: `.claude-auto-context/db/claude-auto-context.db` (NOT `auto-context.db`)
+- Hooks config: `hooks/hooks.json`; logs: `.claude-auto-context/db/worker.log`
+- Polls 30s, exits 5min idle, stale healing 60s, max 3 retries → `dead`
+- 3 Agent SDK sub-agents are code-complete but NOT e2e validated
+
+## External Documentation
+- Claude Code docs: `https://code.claude.com/docs/en/` (NOT `docs.anthropic.com`)
+
+## Subprocess Spawning
+- `CLAUDECODE` env var must be unset before spawning `claude -p` or Agent SDK — see @.claude/rules/worker-subprocess.md
+- `claude -p` hangs indefinitely inside Claude Code sessions — must run from standalone terminal
