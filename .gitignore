@@ -13,6 +13,9 @@ node_modules/
 .claude-auto-context/db/
 .claude-auto-context/worker.lock
 
+# E2E test project (runtime artifacts)
+test/e2e-project/
+
 # Reference repos (local only)
 research/reference/
 .DS_Store
