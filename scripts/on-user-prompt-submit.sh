@@ -1,24 +1,24 @@
 #!/bin/bash
 # UserPromptSubmit Hook
 # 1. Pipes raw user prompt JSON from stdin to collector for DB storage.
-# 2. Scans .claude-auto-context/offers/ for pending offers and outputs notification.
+# 2. Scans .claude-auto-context/suggestions/ for pending suggestions and outputs notification.
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-OFFERS_DIR="$PROJECT_DIR/.claude-auto-context/offers"
+SUGGESTIONS_DIR="$PROJECT_DIR/.claude-auto-context/suggestions"
 
 # stdin is consumed once — capture it first, then pipe to collector
 INPUT=$(cat)
 echo "$INPUT" | bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" UserPromptSubmit
 
-# Scan for pending offers
-if [ -d "$OFFERS_DIR" ]; then
+# Scan for pending suggestions
+if [ -d "$SUGGESTIONS_DIR" ]; then
   PENDING_TITLES=()
 
-  for f in "$OFFERS_DIR"/*.md; do
+  for f in "$SUGGESTIONS_DIR"/*.md; do
     [ -f "$f" ] || continue
 
-    # Skip applied/rejected/failed offers
+    # Skip applied/rejected/failed suggestions
     grep -q "^applied$" "$f" 2>/dev/null && continue
     grep -q "^rejected$" "$f" 2>/dev/null && continue
     grep -q "^failed$" "$f" 2>/dev/null && continue
@@ -37,7 +37,7 @@ if [ -d "$OFFERS_DIR" ]; then
 
   if [ "$COUNT" -gt 0 ]; then
     echo "─────────────────────────────────────────────────"
-    echo "Auto Context — ${COUNT}건의 Offer 대기 중"
+    echo "Auto Context — ${COUNT}건의 Suggestion 대기 중"
     echo "─────────────────────────────────────────────────"
     for t in "${PENDING_TITLES[@]}"; do
       echo "  $t"

@@ -1,9 +1,9 @@
 ---
-name: create-offer
-description: Detect structural issues and create proposal files in .claude-auto-context/offers/. USE WHEN file splits, directory reorganization, or pattern unification is needed.
+name: create-suggestion
+description: Detect structural issues and create proposal files in .claude-auto-context/suggestions/. USE WHEN file splits, directory reorganization, or pattern unification is needed.
 ---
 
-# Create Offer
+# Create Suggestion
 
 Analyze session data to detect structural issues and create proposal files requiring user approval before applying.
 
@@ -17,17 +17,17 @@ Structural problems evidenced by session data:
 
 ## Evidence Requirements
 
-Every offer MUST include:
+Every suggestion MUST include:
 - At least 3 sessions showing the problem
 - Quantitative metrics (signal ratio, read count vs edit count, etc.)
 - Specific session IDs as evidence
 
 ## Output Format
 
-Create files in `.claude-auto-context/offers/` as `{NNN}-{slug}.md`:
+Create files in `.claude-auto-context/suggestions/` as `{NNN}-{slug}.md`:
 
 ```markdown
-# Offer: {title}
+# Suggestion: {title}
 
 ## Status
 pending
@@ -53,17 +53,17 @@ structure | pattern | organization
 
 ## Procedure
 
-1. Read existing offers in `.claude-auto-context/offers/` to get next sequence number and avoid duplicates
+1. Read existing suggestions in `.claude-auto-context/suggestions/` to get next sequence number and avoid duplicates
 2. Analyze session data for structural patterns
 3. For each candidate:
    a. Verify 3+ sessions
    b. Compute quantitative metrics
    c. Formulate specific, actionable proposal
-4. Write the offer file
+4. Write the suggestion file
 
 ## Anti-Patterns
 
 - Do NOT propose changes without quantitative evidence
 - Do NOT propose trivial restructuring (moving one function)
-- Do NOT create duplicate offers
-- Do NOT apply changes directly -- offers are proposals only
+- Do NOT create duplicate suggestions
+- Do NOT apply changes directly -- suggestions are proposals only

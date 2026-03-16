@@ -12,7 +12,7 @@ When your session ends, a background worker wakes up. It analyzes the accumulate
 
 1. **Rules files** (`.claude/rules/*.md`) are auto-generated from repeated patterns. These load automatically when Claude touches matching files.
 2. **CLAUDE.md updates** are made for project-wide implicit knowledge like non-obvious build commands.
-3. **Structural offers** are created when the worker detects deeper issues (like a file that should be split). These require your explicit approval.
+3. **Structural suggestions** are created when the worker detects deeper issues (like a file that should be split). These require your explicit approval.
 
 Nothing structural changes without your say-so. You run `/cac-apply`, review the evidence, and decide.
 
@@ -68,8 +68,8 @@ All hooks execute in under 100ms. You never notice them.
 
 | Command | Purpose |
 |---------|---------|
-| `/cac-apply {offer-id}` | Review and apply a specific structural offer |
-| `/cac-apply-all` | Apply all pending offers sequentially |
+| `/cac-apply {suggestion-id}` | Review and apply a specific structural suggestion |
+| `/cac-apply-all` | Apply all pending suggestions sequentially |
 
 ### What the Worker Produces
 
@@ -84,15 +84,15 @@ All hooks execute in under 100ms. You never notice them.
 
 Rules files are scoped by glob pattern. Claude loads them automatically when it touches matching files — no CLAUDE.md bloat.
 
-**Offers** (requires your approval):
+**Suggestions** (requires your approval):
 
 ```
-.claude-auto-context/offers/
+.claude-auto-context/suggestions/
   001-split-utils.md          ← "src/utils.ts has 4% signal ratio → split into date.ts, string.ts"
   002-unify-route-patterns.md ← "routes/ uses 3 different patterns → standardize"
 ```
 
-Each offer includes the problem, proposed fix, and evidence from specific sessions.
+Each suggestion includes the problem, proposed fix, and evidence from specific sessions.
 
 ## Architecture
 
@@ -121,7 +121,7 @@ Main Claude Session
                                       │              │
                                       │ ┌──────────┐ │
                                       │ │Rules Agent│─┼─► .claude/rules/ (auto)
-                                      │ │Offer Agent│─┼─► offers/ (pending)
+                                      │ │Suggestion │─┼─► suggestions/ (pending)
                                       │ │ ClaudeMD  │─┼─► CLAUDE.md (auto)
                                       │ └──────────┘ │
                                       │(3 sub-agents)│
@@ -133,7 +133,7 @@ Main Claude Session
 1. **Hooks** are dumb pipes. They receive raw JSON on stdin and forward it to the collector. No parsing, no filtering.
 2. **Collector** (`collector.mjs`) parses JSON and inserts into SQLite with parameterized queries. Safe escaping, no shell injection risks.
 3. **SQLite** stores everything in `raw_events` table with `processed=0`.
-4. **Worker** polls for unprocessed events, analyzes patterns across sessions, and produces rules/offers/CLAUDE.md updates.
+4. **Worker** polls for unprocessed events, analyzes patterns across sessions, and produces rules/suggestions/CLAUDE.md updates.
 
 ### Why SQLite, Not JSON Files
 
@@ -151,7 +151,7 @@ All runtime data lives in `.claude-auto-context/` in your project root:
 ├── collector.mjs          # Hook → SQLite relay
 ├── db/
 │   └── claude-auto-context.db    # SQLite (raw_events, sessions, insights)
-└── offers/
+└── suggestions/
     ├── 001-split-utils.md        # pending
     └── 002-unify-routes.md       # pending
 ```
@@ -164,16 +164,16 @@ The SQLite database contains three tables:
 | `sessions` | Worker-generated session summaries (task type, files touched, patterns found) |
 | `insights` | Cumulative analysis results (conventions, structure suggestions) |
 
-The `db/` directory is gitignored — it's machine-local runtime data. Rules files and offers are committed.
+The `db/` directory is gitignored — it's machine-local runtime data. Rules files and suggestions are committed.
 
 ## Philosophy
 
-- **Structure over documentation** — The goal isn't a bigger CLAUDE.md. It's a project that doesn't need one. Rules files and structural offers fix root causes, not symptoms.
+- **Structure over documentation** — The goal isn't a bigger CLAUDE.md. It's a project that doesn't need one. Rules files and structural suggestions fix root causes, not symptoms.
 - **Implicit knowledge, not explicit** — Only captures what Claude can't discover from code alone: conventions, prohibitions, non-obvious commands, runtime dependencies.
 - **Dumb collection, smart analysis** — Hooks are fast and stupid (<100ms). All intelligence lives in the background worker where latency doesn't matter.
-- **Human-in-the-loop for structure** — Convention rules auto-generate. Structural changes (file splits, directory reorganization) always require approval via `/cac-apply`.
+- **Human-in-the-loop for structure** — Convention rules auto-generate. Structural suggestions (file splits, directory reorganization) always require approval via `/cac-apply`.
 - **Local and private** — All processing happens on your machine. SQLite is local. No data leaves your project.
-- **Self-correcting** — Conventions that stop being relevant decay. Offers that get dismissed teach the worker what not to suggest.
+- **Self-correcting** — Conventions that stop being relevant decay. Suggestions that get dismissed teach the worker what not to suggest.
 
 ## Requirements
 
@@ -208,12 +208,12 @@ claude-auto-context/
 
 - [x] Hook → Collector → SQLite pipeline
 - [x] SQLite polling worker (Claim-Confirm queue pattern)
-- [ ] 3 sub-agent architecture (Rules Agent, Offer Agent, CLAUDE.md Agent)
+- [ ] 3 sub-agent architecture (Rules Agent, Suggestion Agent, CLAUDE.md Agent)
 - [ ] Bulk prompt construction from SQLite data
 - [ ] Auto-generated `.claude/rules/` from conventions (Rules Agent)
-- [ ] Offers system for structural suggestions (Offer Agent)
+- [ ] Suggestions system for structural proposals (Suggestion Agent)
 - [ ] CLAUDE.md auto-update for implicit knowledge (CLAUDE.md Agent)
-- [ ] `/cac-apply` offer review and application
+- [ ] `/cac-apply` suggestion review and application
 - [ ] Convention decay (auto-remove stale rules)
 
 ## Want the Easy Version?

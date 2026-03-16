@@ -93,18 +93,61 @@ function buildBulkPrompt(events) {
   }
   let out = `# Observed Data: ${events.length} events, ${bySession.size} sessions\n`;
   let total = out.length;
+
   for (const [sid, evts] of bySession) {
     out += `\n## Session: ${sid}\n`;
-    for (const e of evts) {
-      let p = e.payload.length > MAX_PAYLOAD
-        ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
-      const line = `- [${e.hook_type}${e.tool_name ? ':' + e.tool_name : ''}] ${p}\n`;
-      if (total + line.length > MAX_TOTAL) {
-        out += '\n[...truncated due to size limit]\n';
-        return out;
+
+    // Separate events by type: UserPromptSubmit first, then the rest
+    const userPrompts = evts.filter(e => e.hook_type === 'UserPromptSubmit');
+    const toolActivity = evts.filter(e => e.hook_type !== 'UserPromptSubmit' && e.hook_type !== 'Stop');
+    const stopEvents = evts.filter(e => e.hook_type === 'Stop');
+
+    // User Prompts section — placed first so LLM reads user intent before tool outputs
+    if (userPrompts.length > 0) {
+      out += `### User Prompts\n`;
+      for (const e of userPrompts) {
+        let p = e.payload.length > MAX_PAYLOAD
+          ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
+        const line = `- [UserPromptSubmit] ${p}\n`;
+        if (total + line.length > MAX_TOTAL) {
+          out += '\n[...truncated due to size limit]\n';
+          return out;
+        }
+        out += line;
+        total += line.length;
       }
-      out += line;
-      total += line.length;
+    }
+
+    // Tool Activity section
+    if (toolActivity.length > 0) {
+      out += `### Tool Activity\n`;
+      for (const e of toolActivity) {
+        let p = e.payload.length > MAX_PAYLOAD
+          ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
+        const line = `- [${e.hook_type}${e.tool_name ? ':' + e.tool_name : ''}] ${p}\n`;
+        if (total + line.length > MAX_TOTAL) {
+          out += '\n[...truncated due to size limit]\n';
+          return out;
+        }
+        out += line;
+        total += line.length;
+      }
+    }
+
+    // Session End section
+    if (stopEvents.length > 0) {
+      out += `### Session End\n`;
+      for (const e of stopEvents) {
+        let p = e.payload.length > MAX_PAYLOAD
+          ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
+        const line = `- [Stop] ${p}\n`;
+        if (total + line.length > MAX_TOTAL) {
+          out += '\n[...truncated due to size limit]\n';
+          return out;
+        }
+        out += line;
+        total += line.length;
+      }
     }
   }
   return out;
@@ -122,11 +165,17 @@ async function processBatch(events) {
     const result = query({
       prompt: `${bulkPrompt}
 
-You are an orchestrator. Analyze the above session data and delegate to the appropriate agents:
-1. Repeated conventions (2+ sessions) → rules-agent
-2. Structural issues (file bloat, misorganization) → offer-agent
-3. Missing tacit knowledge for CLAUDE.md → claudemd-agent
-Delegate to the appropriate agents. Do NOT do the work yourself.`,
+You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
+You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
+
+1. rules-agent — Repeated conventions (2+ sessions)
+   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
+2. suggestion-agent — Structural issues (file bloat, misorganization)
+   Focus on "Tool Activity" sections for file patterns and structural signals (e.g. same large file read repeatedly).
+3. claudemd-agent — Missing tacit knowledge for CLAUDE.md
+   **Focus on "User Prompts" sections** — user corrections and trial-and-error contain tacit knowledge.
+
+Call all three agents now.`,
       options: {
         model: 'sonnet',
         cwd: projectRoot,
@@ -147,11 +196,11 @@ Delegate to the appropriate agents. Do NOT do the work yourself.`,
             skills: ['extract-rules'],
             maxTurns: 10,
           },
-          "offer-agent": {
-            description: "Detect structural issues and create proposal files in .claude-auto-context/offers/. Use when file splits, directory reorganization, or pattern changes are needed.",
-            prompt: "Follow the create-offer skill instructions precisely. Analyze the session data provided by the orchestrator and create offer files with quantitative evidence.",
+          "suggestion-agent": {
+            description: "Detect structural issues and create proposal files in .claude-auto-context/suggestions/. Use when file splits, directory reorganization, or pattern changes are needed.",
+            prompt: "Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.",
             tools: ['Read', 'Write', 'Glob'],
-            skills: ['create-offer'],
+            skills: ['create-suggestion'],
             maxTurns: 10,
           },
           "claudemd-agent": {
@@ -202,7 +251,7 @@ async function main() {
 
   // Ensure output directories exist
   mkdirSync(resolve(projectRoot, '.claude', 'rules'), { recursive: true });
-  mkdirSync(resolve(projectRoot, '.claude-auto-context', 'offers'), { recursive: true });
+  mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
 
   let lastEventTime = Date.now();
 
