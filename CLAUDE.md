@@ -10,8 +10,15 @@
 - Canonical DB: `.claude-auto-context/db/claude-auto-context.db` (NOT `auto-context.db`)
 - Hooks config: `hooks/hooks.json`; logs: `.claude-auto-context/db/worker.log`
 
+## Rules Files
+- Frontmatter key is `globs:` (NOT `paths:`) — using `paths:` silently applies the rule to ALL files, not matched paths
+
 ## External Documentation
 - Claude Code docs: `https://code.claude.com/docs/en/` (NOT `docs.anthropic.com`)
+
+## Skills Distribution
+- `plugin.json` does NOT register skills — skills in `.claude/skills/` must be manually copied to the target project's `.claude/skills/` directory
+- There is no install script that auto-copies skills; a user installing the plugin elsewhere will NOT get skills automatically
 
 ## Subprocess Spawning
 - `CLAUDECODE` env var must be unset before spawning `claude -p` or Agent SDK — see @.claude/rules/worker-subprocess.md
