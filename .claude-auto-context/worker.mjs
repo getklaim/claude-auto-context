@@ -5,7 +5,7 @@
 // Uses bun:sqlite — zero native dependencies.
 
 import { Database } from 'bun:sqlite';
-import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
@@ -30,6 +30,55 @@ function log(msg) {
   const ts = new Date().toISOString();
   const line = `[${ts}] ${msg}\n`;
   try { appendFileSync(logPath, line); } catch {}
+}
+
+// --- Context Snapshot (for hygiene-agent trigger) ---
+
+function takeContextSnapshot(root) {
+  const snapshot = {};
+  const rulesDir = resolve(root, '.claude', 'rules');
+  const claudeMdPath = resolve(root, 'CLAUDE.md');
+
+  if (existsSync(rulesDir)) {
+    for (const entry of readdirSync(rulesDir)) {
+      if (!entry.endsWith('.md')) continue;
+      const fullPath = resolve(rulesDir, entry);
+      const content = readFileSync(fullPath, 'utf8');
+      snapshot[fullPath] = Bun.hash(content);
+    }
+  }
+
+  if (existsSync(claudeMdPath)) {
+    const content = readFileSync(claudeMdPath, 'utf8');
+    snapshot[claudeMdPath] = Bun.hash(content);
+  }
+
+  return snapshot;
+}
+
+function hasContextChanged(before, after) {
+  const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of allKeys) {
+    if (before[key] !== after[key]) return true;
+  }
+  return false;
+}
+
+function shouldRunHygiene(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  const claudeMdPath = resolve(root, 'CLAUDE.md');
+
+  let rulesCount = 0;
+  if (existsSync(rulesDir)) {
+    rulesCount = readdirSync(rulesDir).filter(f => f.endsWith('.md')).length;
+  }
+
+  let claudeMdLines = 0;
+  if (existsSync(claudeMdPath)) {
+    claudeMdLines = readFileSync(claudeMdPath, 'utf8').split('\n').length;
+  }
+
+  return rulesCount >= 2 || claudeMdLines >= 10;
 }
 
 // --- Queue Operations ---
@@ -153,10 +202,143 @@ function buildBulkPrompt(events) {
   return out;
 }
 
+// --- Hygiene Prompt Builder ---
+
+function buildHygienePrompt(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  const claudeMdPath = resolve(root, 'CLAUDE.md');
+  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
+
+  let rulesContent = '';
+  if (existsSync(rulesDir)) {
+    for (const entry of readdirSync(rulesDir).sort()) {
+      if (!entry.endsWith('.md')) continue;
+      const content = readFileSync(resolve(rulesDir, entry), 'utf8');
+      rulesContent += `\n### ${entry}\n\`\`\`\n${content}\n\`\`\`\n`;
+    }
+  }
+
+  let claudeMd = '';
+  if (existsSync(claudeMdPath)) {
+    claudeMd = readFileSync(claudeMdPath, 'utf8');
+  }
+
+  let nextSeq = 1;
+  if (existsSync(suggestionsDir)) {
+    const existing = readdirSync(suggestionsDir)
+      .filter(f => f.endsWith('.md'))
+      .map(f => parseInt(f.match(/^(\d+)/)?.[1] || '0', 10))
+      .filter(n => !isNaN(n));
+    if (existing.length > 0) nextSeq = Math.max(...existing) + 1;
+  }
+
+  return `# Context Hygiene Check
+
+You are a context hygiene auditor. Your job is to analyze the project's
+context files (rules and CLAUDE.md) for quality issues.
+
+## Input: Current Context Files
+
+### .claude/rules/ files:
+${rulesContent || '(none)'}
+
+### CLAUDE.md:
+\`\`\`
+${claudeMd || '(empty)'}
+\`\`\`
+
+## Your 6-Point Checklist
+
+When you find an issue, create a suggestion file at:
+\`.claude-auto-context/suggestions/{NNN}-hygiene-{slug}.md\`
+
+Start numbering from ${nextSeq}. Use zero-padded 3-digit numbers (e.g. ${String(nextSeq).padStart(3, '0')}).
+
+### H-01: Duplicate Detection
+Compare all rules file pairs. Flag two rules that prescribe the same behavior
+for overlapping globs. "Same behavior" means Claude would take the same action
+on the same file.
+- Output category: \`hygiene-duplicate\`
+
+### H-02: Contradiction Detection
+Compare all rules file pairs AND rules vs CLAUDE.md.
+Flag two directives that give opposite instructions for the same scope.
+Example: Rule A says "use try-catch" for src/**/*.ts,
+Rule B says "use Result type, no try-catch" for src/**/*.ts.
+- Output category: \`hygiene-contradiction\`
+
+### H-03: Stale Reference Detection
+For each rules file with globs patterns in frontmatter,
+use the Glob tool to verify matching files exist in the codebase.
+If a glob matches 0 files, that rule is stale.
+- Output category: \`hygiene-stale\`
+
+### H-04: Verbosity / Token Efficiency
+Measure character count of each rules file. If over 500 chars AND
+the same meaning can be expressed in 50% fewer chars,
+suggest a compressed version.
+- Output category: \`hygiene-verbose\`
+
+### H-05: CLAUDE.md Bloat
+Measure CLAUDE.md line count. If over 30 lines, identify content
+that should be moved to scoped rules files.
+- Output category: \`hygiene-bloat\`
+
+### H-06: Priority Placement (Lost-in-Middle)
+When 5+ rules files exist, check if critical rules (error handling,
+security, testing) have narrow globs limiting their visibility.
+Critical rules with narrow globs should be flagged.
+- Output category: \`hygiene-ordering\`
+
+## Output Format
+
+Create one file per issue:
+\`.claude-auto-context/suggestions/{NNN}-hygiene-{slug}.md\`
+
+Use exactly this format:
+
+\`\`\`markdown
+# Suggestion: {descriptive title}
+
+## Status
+pending
+
+## Category
+{hygiene-duplicate | hygiene-contradiction | hygiene-stale |
+ hygiene-verbose | hygiene-bloat | hygiene-ordering}
+
+## Problem
+{description with specific file names and content excerpts}
+
+## Proposal
+{concrete fix: merge these files / remove this rule /
+ rewrite as follows / move this section to a rules file}
+
+## Evidence
+- Source: hygiene-agent automated check
+- Files analyzed: {list}
+- Check: {H-01 | H-02 | ... | H-06}
+
+## Metrics
+- {relevant metric: duplication %, char reduction %, etc}
+\`\`\`
+
+## Rules
+
+- Only report real issues. If all 6 checks pass, create no files.
+- Do NOT modify existing files. Only create new suggestion files.
+- Read existing suggestions first to determine next sequence number
+  and avoid duplicating pending suggestions.
+- One suggestion file per issue. Do not combine multiple issues.`;
+}
+
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events) {
   const bulkPrompt = buildBulkPrompt(events);
+
+  // ① Snapshot context files before orchestrator
+  const snapshotBefore = takeContextSnapshot(projectRoot);
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), AGENT_TIMEOUT_MS);
@@ -221,6 +403,54 @@ Call all three agents now.`,
     }
   } finally {
     clearTimeout(timer);
+  }
+
+  // ② Snapshot after orchestrator, conditionally run hygiene-agent
+  const snapshotAfter = takeContextSnapshot(projectRoot);
+
+  if (!hasContextChanged(snapshotBefore, snapshotAfter)) {
+    log('hygiene: no context changes detected, skipping');
+    return;
+  }
+
+  if (!shouldRunHygiene(projectRoot)) {
+    log('hygiene: below minimum threshold (< 2 rules, < 10 CLAUDE.md lines), skipping');
+    return;
+  }
+
+  log('hygiene: context changes detected, running hygiene-agent');
+
+  const hygieneAc = new AbortController();
+  const hygieneTimer = setTimeout(() => hygieneAc.abort(), AGENT_TIMEOUT_MS);
+
+  try {
+    const hygienePrompt = buildHygienePrompt(projectRoot);
+    const hygieneResult = query({
+      prompt: hygienePrompt,
+      options: {
+        model: 'sonnet',
+        cwd: projectRoot,
+        allowedTools: ['Read', 'Write', 'Glob'],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        abortController: hygieneAc,
+        maxTurns: 10,
+        maxBudgetUsd: 0.50,
+        persistSession: false,
+        settingSources: ['project'],
+        stderr: (data) => log(`[hygiene-stderr] ${data}`),
+      }
+    });
+
+    for await (const message of hygieneResult) {
+      if (message.type === 'result') {
+        log(`hygiene ${message.subtype}: ${message.result?.slice(0, 200) ?? ''}`);
+      }
+    }
+  } catch (err) {
+    log(`hygiene: failed (non-fatal): ${err.message}`);
+  } finally {
+    clearTimeout(hygieneTimer);
   }
 }
 
