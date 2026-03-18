@@ -1,5 +1,8 @@
 # 001 — Lock File Not Cleaned Up on Worker Crash or SIGKILL
 
+## Status
+applied
+
 ## Summary
 
 The worker uses a PID-based lock file at `.claude-auto-context/worker.lock` to

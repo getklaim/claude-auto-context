@@ -12,13 +12,16 @@ LOG_FILE="$LOG_DIR/worker.log"
 mkdir -p "$LOG_DIR"
 
 # Check lock file
+# NOTE: SIGKILL cannot be caught by the worker, so this stale-lock check is
+# essential for recovering from hard kills, OOM kills, or machine reboots.
 if [ -f "$LOCK_FILE" ]; then
   PID=$(cat "$LOCK_FILE" 2>/dev/null)
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     # Worker already running
     exit 0
   fi
-  # Stale lock — remove it
+  # Stale lock — remove it and log for post-mortem analysis
+  echo "[$(date -u +%FT%TZ)] stale lock removed (pid=$PID)" >> "$LOG_FILE"
   rm -f "$LOCK_FILE"
 fi
 

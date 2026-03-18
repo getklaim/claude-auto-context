@@ -20,11 +20,14 @@ const logPath = resolve(dbDir, 'worker.log');
 
 const POLL_INTERVAL_MS = 30_000;     // 30s between polls when idle
 const IDLE_TIMEOUT_MS = 5 * 60_000;  // 5min idle → exit
-const STALE_THRESHOLD_S = 60;        // 60s → self-heal
+const STALE_THRESHOLD_S = 200;       // 200s → self-heal (just above AGENT_TIMEOUT_MS/1000)
 const MAX_RETRIES = 3;
 const AGENT_TIMEOUT_MS = 3 * 60_000; // 3min per agent session
 
 // --- Logging ---
+// NOTE: SIGKILL cannot be caught, so the lock file may be left behind on hard kills.
+// The launcher script handles stale locks via `kill -0` check on next invocation.
+// See also: scripts/worker-launcher.sh for the two-layer CLAUDECODE env var cleanup.
 
 function log(msg) {
   const ts = new Date().toISOString();
@@ -83,14 +86,22 @@ function shouldRunHygiene(root) {
 
 // --- Queue Operations ---
 
-function selfHeal(db) {
-  // Recover stale processing events (>60s)
-  const healed = db.run(`
-    UPDATE raw_events
-    SET status = 'pending', claimed_at = NULL, retry_count = retry_count + 1
-    WHERE status = 'processing'
-      AND claimed_at < datetime('now', '-${STALE_THRESHOLD_S} seconds')
-  `);
+function selfHeal(db, forceAll = false) {
+  // Recover stale processing events
+  // forceAll=true: recover ALL processing events (used on startup)
+  // forceAll=false: recover only events older than STALE_THRESHOLD_S (used during polling)
+  const healed = forceAll
+    ? db.run(`
+        UPDATE raw_events
+        SET status = 'pending', claimed_at = NULL, retry_count = retry_count + 1
+        WHERE status = 'processing'
+      `)
+    : db.run(`
+        UPDATE raw_events
+        SET status = 'pending', claimed_at = NULL, retry_count = retry_count + 1
+        WHERE status = 'processing'
+          AND claimed_at < datetime('now', '-${STALE_THRESHOLD_S} seconds')
+      `);
 
   // Move over-retried events to dead
   const dead = db.run(`
@@ -482,6 +493,11 @@ async function main() {
   // Ensure output directories exist
   mkdirSync(resolve(projectRoot, '.claude', 'rules'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
+
+  // On startup, immediately recover ALL orphaned processing events from previous worker
+  // This handles crash/SIGKILL scenarios where the previous worker left events stranded
+  selfHeal(db, true);
+  log('startup: recovered any orphaned processing events');
 
   let lastEventTime = Date.now();
 
