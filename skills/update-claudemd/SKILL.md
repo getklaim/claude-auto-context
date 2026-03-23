@@ -40,9 +40,8 @@ Analyze session data to identify non-obvious project knowledge that should be ad
 
 ## Constraints
 
-- **Maximum 3 lines** per single update
 - Use **Edit tool only** (never Write -- preserve existing content)
-- Append to end of file, do not restructure existing sections
+- May update, correct, or remove existing entries when information is outdated or wrong
 - Terse and actionable, no verbose explanations
 
 ## Procedure
@@ -57,7 +56,7 @@ Analyze session data to identify non-obvious project knowledge that should be ad
 
 ## Anti-Patterns
 
-- Do NOT rewrite or restructure existing CLAUDE.md content
+- Do NOT restructure or reorder existing CLAUDE.md sections
 - Do NOT add domain-specific information (use rules/ instead)
 - Do NOT add information discoverable from code
 - Do NOT exceed 3 lines per update

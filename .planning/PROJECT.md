@@ -44,7 +44,7 @@ Continuously improve Claude Code's project understanding by extracting patterns 
 
 <!-- Explicit boundaries. Includes reasoning to prevent re-adding. -->
 
-- Team merge conflict handling for auto-generated files — Deferred to next milestone; needs separate design for rules, CLAUDE.md, and hooks.json
+- ~~Team merge conflict handling~~ — Now v1.2 milestone (local isolation + promotion skill)
 - Project initial scan (one-time analysis of package.json, tsconfig, etc.) — Session pattern analysis only for this milestone
 - Gradual trust/auto-apply system — Direct modification chosen; trust escalation deferred
 - Hook removal/cleanup — Focus on generation first; lifecycle management later
