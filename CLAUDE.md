@@ -25,5 +25,5 @@
 - There is no install script that auto-copies skills; a user installing the plugin elsewhere will NOT get skills automatically
 
 ## Subprocess Spawning
-- `CLAUDECODE` env var must be unset before spawning `claude -p` or Agent SDK — see @.claude/rules/worker-subprocess.md
+- `CLAUDECODE` env var must be unset before spawning `claude -p` or Agent SDK — see `.claude/rules/worker-subprocess.md`
 - `claude -p` hangs indefinitely inside Claude Code sessions — must run from standalone terminal
