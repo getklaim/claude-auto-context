@@ -24,7 +24,7 @@ Every suggestion MUST include:
 
 ## Output Format
 
-Create files in `.claude-auto-context/suggestions/` as `{NNN}-{slug}.md`:
+Create files in `.claude-auto-context/suggestions/` as `YYYYMMDD-HHMMSS-{slug}.md`:
 
 ```markdown
 # Suggestion: {title}
@@ -53,13 +53,14 @@ structure | pattern | organization
 
 ## Procedure
 
-1. Read existing suggestions in `.claude-auto-context/suggestions/` to get next sequence number and avoid duplicates
-2. Analyze session data for structural patterns
-3. For each candidate:
+1. Read existing suggestions in `.claude-auto-context/suggestions/` to avoid duplicates
+2. Generate timestamp for filename: `YYYYMMDD-HHMMSS` format using current UTC time (e.g., `20260323-143052`)
+3. Analyze session data for structural patterns
+4. For each candidate:
    a. Verify 3+ sessions
    b. Compute quantitative metrics
    c. Formulate specific, actionable proposal
-4. Write the suggestion file
+5. Write the suggestion file as `YYYYMMDD-HHMMSS-{slug}.md`
 
 ## Anti-Patterns
 

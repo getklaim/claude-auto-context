@@ -27,10 +27,11 @@ if [ -d "$SUGGESTIONS_DIR" ]; then
     TITLE=$(grep -m1 "^# " "$f" | sed 's/^# //')
     [ -z "$TITLE" ] && continue
 
-    # Extract numeric ID from filename (e.g., 001-slug.md → 001)
-    ID=$(basename "$f" .md | grep -o '^[0-9]*')
+    # Extract timestamp ID from filename (e.g., 20260323-143052-slug.md → 20260323-143052)
+    ID=$(basename "$f" .md | grep -oE '^[0-9]{8}-[0-9]{6}')
+    [ -z "$ID" ] && continue
 
-    PENDING_TITLES+=("$ID. $TITLE")
+    PENDING_TITLES+=("[$ID] $TITLE")
   done
 
   COUNT=${#PENDING_TITLES[@]}
