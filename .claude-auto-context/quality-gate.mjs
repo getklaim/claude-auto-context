@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // quality-gate.mjs — Rule-based quality evaluation for agent-generated context
 // Deterministic checks, no LLM calls. Auto-fixes minor issues, reverts failures.
-// 11 checks across 3 file types: rules, CLAUDE.md, suggestions.
+// 8 checks across 2 file types: rules (committed + local), suggestions.
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
@@ -133,26 +133,7 @@ function checkNotDuplicate(content, existingRules) {
     passed: true, detail: 'No duplicates' };
 }
 
-// ─── CLAUDE.md Checks ───────────────────────────────────
-// Q-07, Q-08 removed — claudemd-agent has full edit freedom.
-// Only Q-09 (duplicate detection) remains as a warning.
-
-function checkClaudeMdNotDuplicate(before, after) {
-  if (!before) return { id: 'Q-09', name: 'claudemd-no-dup', severity: 'warn',
-    passed: true, detail: 'New file' };
-  const al = after.split('\n').filter(l => l.trim());
-  // Check for duplicate lines within the final content
-  for (let i = 0; i < al.length; i++) {
-    for (let j = i + 1; j < al.length; j++) {
-      if (al[i].trim() && jaccardSimilarity(al[i], al[j]) > 0.8) {
-        return { id: 'Q-09', name: 'claudemd-no-dup', severity: 'warn',
-          passed: false, detail: `Duplicates: "${al[i].trim().slice(0, 60)}"` };
-      }
-    }
-  }
-  return { id: 'Q-09', name: 'claudemd-no-dup', severity: 'warn',
-    passed: true, detail: 'No duplicate content' };
-}
+// Q-07, Q-08, Q-09 removed — claudemd-agent removed entirely in v1.2.
 
 // ─── Suggestion Checks ──────────────────────────────────
 
@@ -182,7 +163,7 @@ function checkSuggestionStatus(content) {
 export function takeContentSnapshot(projectRoot) {
   const snapshot = {};
   const rulesDir = resolve(projectRoot, '.claude', 'rules');
-  const claudeMdPath = resolve(projectRoot, 'CLAUDE.md');
+  const localRulesDir = resolve(projectRoot, '.claude', 'rules', 'local');
   const suggestionsDir = resolve(projectRoot, '.claude-auto-context', 'suggestions');
 
   if (existsSync(rulesDir)) {
@@ -191,8 +172,11 @@ export function takeContentSnapshot(projectRoot) {
       snapshot[resolve(rulesDir, f)] = readFileSync(resolve(rulesDir, f), 'utf8');
     }
   }
-  if (existsSync(claudeMdPath)) {
-    snapshot[claudeMdPath] = readFileSync(claudeMdPath, 'utf8');
+  if (existsSync(localRulesDir)) {
+    for (const f of readdirSync(localRulesDir)) {
+      if (!f.endsWith('.md')) continue;
+      snapshot[resolve(localRulesDir, f)] = readFileSync(resolve(localRulesDir, f), 'utf8');
+    }
   }
   if (existsSync(suggestionsDir)) {
     for (const f of readdirSync(suggestionsDir)) {
@@ -226,10 +210,6 @@ function evaluateFile(filePath, contentAfter, contentBefore, fileType, existingR
       checkContentSubstance(content),
       checkContentLength(content),
       checkNotDuplicate(content, existingRules)
-    );
-  } else if (fileType === 'claudemd') {
-    checks.push(
-      checkClaudeMdNotDuplicate(contentBefore, content)
     );
   } else if (fileType === 'suggestion') {
     checks.push(
@@ -268,7 +248,7 @@ function evaluateFile(filePath, contentAfter, contentBefore, fileType, existingR
 export function runQualityGate(snapshotBefore, projectRoot) {
   const snapshotAfter = takeContentSnapshot(projectRoot);
   const rulesDir = resolve(projectRoot, '.claude', 'rules');
-  const claudeMdPath = resolve(projectRoot, 'CLAUDE.md');
+  const localRulesDir = resolve(projectRoot, '.claude', 'rules', 'local');
   const suggestionsDir = resolve(projectRoot, '.claude-auto-context', 'suggestions');
 
   // Find changed/new files
@@ -277,8 +257,7 @@ export function runQualityGate(snapshotBefore, projectRoot) {
     const contentBefore = snapshotBefore[path] ?? null;
     if (contentBefore === null || contentBefore !== contentAfter) {
       let fileType = 'unknown';
-      if (path === claudeMdPath) fileType = 'claudemd';
-      else if (path.startsWith(rulesDir + '/')) fileType = 'rule';
+      if (path.startsWith(rulesDir + '/') || path.startsWith(localRulesDir + '/')) fileType = 'rule';
       else if (path.startsWith(suggestionsDir + '/')) fileType = 'suggestion';
 
       changes.push({ path, contentBefore, contentAfter, fileType,
