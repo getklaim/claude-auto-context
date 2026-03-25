@@ -173,6 +173,186 @@ function applyNegativeHeuristics(fingerprint, events) {
   return { passed: true, reason: null };
 }
 
+// --- SDET-01: Prompt Normalization and Jaccard Similarity ---
+
+function normalizePrompt(text) {
+  return text
+    .toLowerCase()
+    .replace(/\S+\/\S+\.\w+/g, '')                           // strip file paths (e.g., src/utils.ts)
+    .replace(/하고|그리고|후에|다음에|그다음/g, ' ')              // strip Korean connectors
+    .replace(/\bthen\b|\bafter that\b|\band then\b|\bfinally\b/g, ' ')  // strip English connectors
+    .replace(/[^a-z0-9\uAC00-\uD7A3\u3131-\u3163\s]/g, ' ')  // keep alphanumeric + Hangul syllables + jamo
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function wordSet(text) {
+  return new Set(
+    text.toLowerCase()
+      .replace(/[^a-z0-9\uAC00-\uD7A3\u3131-\u3163\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 1)
+  );
+}
+
+function jaccardSimilarity(a, b) {
+  const sa = wordSet(normalizePrompt(a));
+  const sb = wordSet(normalizePrompt(b));
+  if (sa.size === 0 && sb.size === 0) return 1;
+  if (sa.size === 0 || sb.size === 0) return 0;
+  let inter = 0;
+  for (const w of sa) if (sb.has(w)) inter++;
+  return inter / (sa.size + sb.size - inter);
+}
+
+// --- SDET-01: LCS Algorithm for Tool Sequences ---
+
+function lcs(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+function lcsSequence(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  // Backtrack to find actual sequence
+  const result = [];
+  let i = m, j = n;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.unshift(a[i - 1]);
+      i--; j--;
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  return result;
+}
+
+function workflowSimilarity(seqA, seqB) {
+  if (seqA.length === 0 && seqB.length === 0) return 1;
+  if (seqA.length === 0 || seqB.length === 0) return 0;
+  const lcsLen = lcs(seqA, seqB);
+  const avg = (seqA.length + seqB.length) / 2;
+  return lcsLen / avg;
+}
+
+function groupSessionsByPattern(fingerprints, existingObservations) {
+  // Each group: { patternKey, sessions: [{sessionId, prompts, toolSeq}], lcsSeq, bestPrompt }
+  const groups = [];
+
+  // Load existing observations into comparable format
+  const priorSessions = existingObservations.map(obs => {
+    const ev = JSON.parse(obs.evidence);
+    return {
+      sessionId: obs.session_id,
+      patternKey: obs.pattern_key,
+      prompts: [ev.prompt_fingerprint || ''],
+      toolSeq: ev.tool_sequence || [],
+    };
+  });
+
+  const allSessions = [...fingerprints, ...priorSessions];
+
+  // Union-Find style grouping: compare all pairs
+  const assigned = new Set();
+  for (let i = 0; i < allSessions.length; i++) {
+    if (assigned.has(i)) continue;
+    const group = { sessions: [allSessions[i]], lcsSeq: allSessions[i].toolSeq };
+
+    for (let j = i + 1; j < allSessions.length; j++) {
+      if (assigned.has(j)) continue;
+      const promptA = allSessions[i].prompts.join(' ');
+      const promptB = allSessions[j].prompts.join(' ');
+      const jaccard = jaccardSimilarity(promptA, promptB);
+      const lcsLen = lcs(allSessions[i].toolSeq, allSessions[j].toolSeq);
+
+      if (jaccard > 0.5 && lcsLen >= 5) {
+        group.sessions.push(allSessions[j]);
+        group.lcsSeq = lcsSequence(group.lcsSeq, allSessions[j].toolSeq);
+        assigned.add(j);
+      }
+    }
+
+    if (group.sessions.length >= 1) {
+      // Generate pattern key from LCS
+      const seqKey = group.lcsSeq.join('-').slice(0, 60);
+      group.patternKey = `skill:seq:${seqKey}`;
+      group.bestPrompt = allSessions[i].prompts.join(' ');
+      groups.push(group);
+    }
+    assigned.add(i);
+  }
+
+  return groups;
+}
+
+// --- SDET-02: Compound Action Parsing ---
+
+const KO_ACTIONS = {
+  '수정': 'edit', '고쳐': 'edit', '편집': 'edit',
+  '커밋': 'commit', '올려': 'commit',
+  '푸시': 'push', '푸쉬': 'push',
+  '테스트': 'test', '빌드': 'build',
+  '배포': 'deploy', '릴리스': 'release',
+  '확인': 'check', '검토': 'review',
+  '생성': 'create', '만들': 'create',
+  '삭제': 'delete', '제거': 'remove',
+  '린트': 'lint', '포맷': 'format',
+};
+
+function extractKoreanVerbs(text) {
+  const verbs = [];
+  const seen = new Set();
+  for (const [ko, en] of Object.entries(KO_ACTIONS)) {
+    if (text.includes(ko) && !seen.has(en)) {
+      verbs.push(en);
+      seen.add(en);
+    }
+  }
+  return verbs;
+}
+
+const EN_ACTIONS = ['fix', 'edit', 'update', 'commit', 'push', 'test', 'build',
+  'deploy', 'release', 'check', 'review', 'create', 'delete', 'run', 'lint', 'format',
+  'install', 'remove', 'refactor', 'migrate'];
+
+function extractEnglishVerbs(text) {
+  const segments = text.toLowerCase().split(/\bthen\b|,\s*and\b|,\s|\band\b|\bafter that\b/);
+  return segments
+    .map(s => EN_ACTIONS.find(v => s.trim().startsWith(v)))
+    .filter(Boolean);
+}
+
+function extractCompoundVerbs(text) {
+  const ko = extractKoreanVerbs(text);
+  const en = extractEnglishVerbs(text);
+  // Return whichever found more verbs (mixed prompts default to the richer extraction)
+  return ko.length >= en.length ? ko : en;
+}
+
+function isCompoundAction(text, toolSeqLength) {
+  const verbs = extractCompoundVerbs(text);
+  return verbs.length >= 2 && toolSeqLength >= 5;
+}
+
 // --- Entry Point (stub — wired in Plan 03) ---
 
 function runSkillDetector(events, db) {
