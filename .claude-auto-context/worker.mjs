@@ -9,6 +9,7 @@ import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync, readd
 import { resolve } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
+import { runSkillDetector } from './skill-detector.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -505,6 +506,16 @@ If the file already exists, read it first and append.`,
     }
   } catch (err) {
     log(`quality-gate: failed (non-fatal): ${err.message}`);
+  }
+
+  // ②c Skill Detector — deterministic pattern detection (no LLM)
+  try {
+    const detectorResult = runSkillDetector(events, db);
+    log(`skill-detector: ${detectorResult.candidates} candidates, ` +
+        `${detectorResult.observations_written} written, ` +
+        `${detectorResult.discarded} discarded`);
+  } catch (err) {
+    log(`skill-detector: failed (non-fatal): ${err.message}`);
   }
 
   // ④ Check if context still changed after gate (reverts may have undone changes)
