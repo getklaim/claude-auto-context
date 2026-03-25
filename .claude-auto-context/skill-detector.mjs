@@ -180,8 +180,29 @@ function runSkillDetector(events, db) {
   const filtered = filterEvents(events);
   // Extract per-session fingerprints (prompts + toolSeq) — used in Plan 02+03
   const fingerprints = extractSessionFingerprints(filtered);
-  void fingerprints; // pipeline wired in Plan 03
-  return { candidates: 0, observations_written: 0, discarded: 0 };
+
+  // Group events by session_id for per-session heuristic checks
+  const bySession = new Map();
+  for (const e of filtered) {
+    if (!bySession.has(e.session_id)) bySession.set(e.session_id, []);
+    bySession.get(e.session_id).push(e);
+  }
+
+  let discarded = 0;
+  const passing = [];
+  for (const fp of fingerprints) {
+    const sessionEvents = bySession.get(fp.sessionId) || [];
+    const result = applyNegativeHeuristics(fp, sessionEvents);
+    if (!result.passed) {
+      discarded++;
+    } else {
+      passing.push(fp);
+    }
+  }
+
+  // Similarity matching and scoring wired in Plan 02+03
+  void passing;
+  return { candidates: 0, observations_written: 0, discarded };
 }
 
 export { runSkillDetector };
