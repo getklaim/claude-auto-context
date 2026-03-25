@@ -3,6 +3,9 @@
 // Runs after collectObservations() in processBatch(). No LLM calls.
 // Writes candidates to observations table with agent_source='skill-agent'.
 
+import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+
 // --- Tool Classification Constants (SDET-03) ---
 
 const EXPLORATION_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'LS']);
@@ -351,6 +354,65 @@ function extractCompoundVerbs(text) {
 function isCompoundAction(text, toolSeqLength) {
   const verbs = extractCompoundVerbs(text);
   return verbs.length >= 2 && toolSeqLength >= 5;
+}
+
+// --- SDET-04: Scoring Formula ---
+
+function countParams(lcsSteps, sessionToolInputs) {
+  let params = 0;
+  for (let i = 0; i < lcsSteps.length; i++) {
+    const values = sessionToolInputs.map(s => JSON.stringify(s[i]?.tool_input || {}));
+    const unique = new Set(values);
+    if (unique.size > 1) params++;
+  }
+  return params;
+}
+
+function hasMutation(toolSeq) {
+  return toolSeq.some(t => MUTATION_TOOLS.has(t)) ? 1 : 0;
+}
+
+function checkExistingCoverage(promptText, projectRoot) {
+  const registryPath = resolve(projectRoot, '.claude-auto-context', 'skills-registry.json');
+  if (!existsSync(registryPath)) return 0;
+  try {
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+    if (!Array.isArray(registry)) return 0;
+    for (const skill of registry) {
+      const desc = skill.description || skill.name || '';
+      if (jaccardSimilarity(promptText, desc) > 0.6) return 1;
+    }
+  } catch {}
+  return 0;
+}
+
+function computeScore(factors) {
+  const {
+    session_count,
+    step_count,
+    param_count = 0,
+    has_mutation = 0,
+    existing_coverage = 0,
+  } = factors;
+
+  return (
+    session_count * 3.0 +
+    step_count * 0.5 +
+    param_count * 1.0 +
+    has_mutation * 2.0 -
+    existing_coverage * 10.0
+  );
+}
+
+function scoreDecision(score, sessionCount, stepCount) {
+  // Hard gate: step_count < 5 is always discarded regardless of score
+  if (stepCount < 5) return 'discard';
+  // Generate threshold
+  if (score >= 10.0 && sessionCount >= 3) return 'generate';
+  // Observe threshold
+  if (score >= 5.0) return 'observe';
+  // Below all thresholds
+  return 'discard';
 }
 
 // --- Entry Point (stub — wired in Plan 03) ---
