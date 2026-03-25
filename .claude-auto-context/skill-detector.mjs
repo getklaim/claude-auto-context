@@ -415,6 +415,74 @@ function scoreDecision(score, sessionCount, stepCount) {
   return 'discard';
 }
 
+// --- SDET-05: Classification Decision Tree ---
+
+function hasNLTrigger(events) {
+  const sorted = [...events].sort((a, b) => a.id - b.id);
+  const firstPrompt = sorted.findIndex(e => e.hook_type === 'UserPromptSubmit');
+  const firstTool = sorted.findIndex(e => e.hook_type === 'PostToolUse');
+  // NL trigger exists if a prompt comes before (or with) tool activity
+  return firstPrompt >= 0 && (firstTool < 0 || firstPrompt <= firstTool);
+}
+
+function hasDecisionPoints(sessions) {
+  if (sessions.length < 2) return false;
+  for (let i = 0; i < sessions.length - 1; i++) {
+    const seqA = sessions[i].toolSeq;
+    const seqB = sessions[i + 1].toolSeq;
+    const lcsLen = lcs(seqA, seqB);
+    const maxLen = Math.max(seqA.length, seqB.length);
+    if (maxLen > 0 && (lcsLen / maxLen) < 0.7) {
+      return true; // sequences diverge — decision branches exist
+    }
+  }
+  return false;
+}
+
+function classifyPattern(fingerprint, sessions, events) {
+  const { toolSeq } = fingerprint;
+  const stepCount = toolSeq.length;
+
+  // Step 1: Too few steps — not a skill
+  if (stepCount < 5) {
+    return { classification: 'rules-or-hooks', reason: 'step_count < 5' };
+  }
+
+  // Step 2: No NL trigger — automated action, delegate to hooks
+  if (!hasNLTrigger(events)) {
+    return { classification: 'hooks-agent', reason: 'no NL trigger' };
+  }
+
+  // Step 3: Single Bash command pattern
+  if (toolSeq.length <= 2 && toolSeq.includes('Bash')) {
+    return { classification: 'hooks-agent', reason: 'single Bash pattern' };
+  }
+
+  // Step 4: No decision points AND step_count < 8 — could be a hook chain
+  if (!hasDecisionPoints(sessions) && stepCount < 8) {
+    return { classification: 'hooks-agent', reason: 'linear chain, step_count < 8' };
+  }
+
+  // Step 5: Full skill candidate
+  const mutation = hasMutation(toolSeq);
+  if (mutation) {
+    return { classification: 'skill', reason: 'NL trigger + mutation + 5+ steps' };
+  }
+
+  // Step 6: Ambiguous — discard (false-negative bias)
+  return { classification: 'discard', reason: 'ambiguous: no mutation despite 5+ steps' };
+}
+
+function checkCrossAgentDuplicate(db, patternKey, sessionId) {
+  const row = db.prepare(`
+    SELECT COUNT(*) as cnt FROM observations
+    WHERE pattern_key = ?
+    AND agent_source IN ('rules-agent', 'hooks-agent')
+    AND session_id = ?
+  `).get(patternKey, sessionId);
+  return row && row.cnt > 0;
+}
+
 // --- Entry Point (stub — wired in Plan 03) ---
 
 function runSkillDetector(events, db) {
