@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-26T00:25:00.000Z"
+last_updated: "2026-03-26T00:45:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 ## Current Position
 
 Phase: 09 (prompt-composition-worker-integration) — EXECUTING
-Plan: 2 of 3 (Plan 01 complete)
+Plan: 3 of 3 (Plans 01 and 02 complete)
 
 ## Project Reference
 
@@ -44,3 +44,6 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 - Plan 09-01 complete: skill-prompt-builder.mjs created with sanitizeSecrets (8 patterns), generalizeExample (PATH + CLI patterns), getGenerateCandidates (decision=generate + sessions>=3), loadExistingSkills (directory scan), buildSkillAgentPrompt (4 sections: What/When/Why/When-NOT)
 - sanitizeSecrets() must be called before any text reaches LLM — applied to patternKey, toolSeq, descriptions, bulkPrompt
 - global regex safety: reset lastIndex=0 before each replace() call on reused regex instances
+- Plan 09-02 complete: skill-prompt-builder.test.mjs created — 25 tests, all passing (bun test --cwd .claude-auto-context skill-prompt-builder.test.mjs)
+- bun --check does NOT work for test files (describe() fails outside test runner); use bun test directly
+- GitHub token test input must NOT use 'token:' prefix — the generic password pattern fires first and prevents ghp_ pattern from matching
