@@ -588,3 +588,31 @@ export function runSkillDetector(events, db) {
 
   return result;
 }
+
+// Exported for testing
+export {
+  normalizePrompt,
+  wordSet,
+  jaccardSimilarity,
+  lcs,
+  lcsSequence,
+  workflowSimilarity,
+  extractKoreanVerbs,
+  extractEnglishVerbs,
+  extractCompoundVerbs,
+  isCompoundAction,
+  isPureExploration,
+  isDebuggingSpiral,
+  isSingleFileEdit,
+  isWebResearchOnly,
+  isSingleHookPattern,
+  isPluginInternalEvent,
+  isSkillInvocationSession,
+  computeScore,
+  scoreDecision,
+  classifyPattern,
+  hasMutation,
+  hasNLTrigger,
+  hasDecisionPoints,
+  applyNegativeHeuristics,
+};

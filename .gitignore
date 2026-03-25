@@ -16,7 +16,8 @@ node_modules/
 # Development docs & research (local only)
 docs/
 research/
-test/
+test/**
+!test/skill-detector.test.mjs
 .DS_Store
 .omc/
 .planning/
