@@ -71,3 +71,61 @@ export function generalizeExample(promptText, toolSequence) {
 
   return { generalizedPrompt: result.trim(), toolFlow: seqStr };
 }
+
+// --- SINT-03: Candidates Query and Skills Loader ---
+
+export function getGenerateCandidates(db) {
+  const rows = db.prepare(`
+    SELECT pattern_key, session_id, evidence
+    FROM observations
+    WHERE pattern_key LIKE 'skill:%'
+      AND agent_source = 'skill-agent'
+    ORDER BY created_at DESC
+  `).all();
+
+  // Group by pattern_key, filter for generate decision
+  const byPattern = new Map();
+  for (const row of rows) {
+    let ev;
+    try { ev = JSON.parse(row.evidence); } catch { continue; }
+    if (ev.decision !== 'generate') continue;
+
+    if (!byPattern.has(row.pattern_key)) {
+      byPattern.set(row.pattern_key, {
+        patternKey: row.pattern_key,
+        sessions: [],
+        evidence: ev,
+      });
+    }
+    byPattern.get(row.pattern_key).sessions.push({
+      sessionId: row.session_id,
+      promptFingerprint: ev.prompt_fingerprint || '',
+      toolSequence: ev.tool_sequence || [],
+    });
+  }
+
+  // Return only candidates with 3+ sessions (generate threshold)
+  return [...byPattern.values()].filter(c => c.sessions.length >= 3);
+}
+
+export function loadExistingSkills(root) {
+  const skillsDir = resolve(root, '.claude', 'skills');
+  if (!existsSync(skillsDir)) return [];
+
+  const entries = readdirSync(skillsDir, { withFileTypes: true });
+  return entries
+    .filter(e => e.isDirectory())
+    .map(dir => {
+      const skillPath = resolve(skillsDir, dir.name, 'SKILL.md');
+      if (!existsSync(skillPath)) return null;
+      const content = readFileSync(skillPath, 'utf8');
+      const nameMatch = content.match(/^name:\s*(.+)/m);
+      const descMatch = content.match(/^description:\s*(.+)/m);
+      return {
+        file: dir.name,
+        name: nameMatch?.[1]?.trim() || dir.name,
+        description: descMatch?.[1]?.trim() || '',
+      };
+    })
+    .filter(Boolean);
+}
