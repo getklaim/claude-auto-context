@@ -10,6 +10,7 @@ import { resolve } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
 import { runSkillDetector } from './skill-detector.mjs';
+import { buildSkillAgentPrompt, loadExistingSkills, getGenerateCandidates } from './skill-prompt-builder.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -25,6 +26,8 @@ const IDLE_TIMEOUT_MS = 5 * 60_000;  // 5min idle → exit
 const STALE_THRESHOLD_S = 200;       // 200s → self-heal (just above AGENT_TIMEOUT_MS/1000)
 const MAX_RETRIES = 3;
 const AGENT_TIMEOUT_MS = 3 * 60_000; // 3min per agent session
+
+let batchCount = 0;
 
 // --- Logging ---
 // NOTE: SIGKILL cannot be caught, so the lock file may be left behind on hard kills.
@@ -377,6 +380,7 @@ pending
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
+  batchCount++;
   const bulkPrompt = buildBulkPrompt(events);
   const observationsContext = buildObservationsContext(db);
 
