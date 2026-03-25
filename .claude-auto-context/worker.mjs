@@ -522,6 +522,58 @@ If the file already exists, read it first and append.`,
     log(`skill-detector: failed (non-fatal): ${err.message}`);
   }
 
+  // ②d Skill Agent — LLM-powered prompt composition (every 3rd batch)
+  if (batchCount % 3 === 0) {
+    try {
+      const candidates = getGenerateCandidates(db);
+      if (candidates.length > 0) {
+        const existingSkills = loadExistingSkills(projectRoot);
+        const skillPrompt = buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db);
+
+        log(`skill-agent: ${candidates.length} candidates, composing prompts (batch #${batchCount})`);
+
+        // Ensure output directory exists
+        mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
+
+        const skillAc = new AbortController();
+        const skillTimer = setTimeout(() => skillAc.abort(), AGENT_TIMEOUT_MS);
+
+        try {
+          const skillResult = query({
+            prompt: skillPrompt,
+            options: {
+              model: 'sonnet',
+              cwd: projectRoot,
+              allowedTools: ['Read', 'Write', 'Glob'],
+              permissionMode: 'bypassPermissions',
+              allowDangerouslySkipPermissions: true,
+              abortController: skillAc,
+              maxTurns: 8,
+              maxBudgetUsd: 0.50,
+              persistSession: false,
+              settingSources: ['project'],
+              stderr: (data) => log(`[skill-stderr] ${data}`),
+            }
+          });
+
+          for await (const message of skillResult) {
+            if (message.type === 'result') {
+              log(`skill-agent ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
+            }
+          }
+        } catch (err) {
+          log(`skill-agent: query failed (non-fatal): ${err.message}`);
+        } finally {
+          clearTimeout(skillTimer);
+        }
+      } else {
+        log(`skill-agent: no generate-ready candidates, skipping (batch #${batchCount})`);
+      }
+    } catch (err) {
+      log(`skill-agent: failed (non-fatal): ${err.message}`);
+    }
+  }
+
   // ④ Check if context still changed after gate (reverts may have undone changes)
   const snapshotAfter = takeContentSnapshot(projectRoot);
 
