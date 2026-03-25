@@ -483,36 +483,108 @@ function checkCrossAgentDuplicate(db, patternKey, sessionId) {
   return row && row.cnt > 0;
 }
 
-// --- Entry Point (stub — wired in Plan 03) ---
+// --- Entry Point ---
 
-function runSkillDetector(events, db) {
-  // Pre-filter self-referential and internal events
+export function runSkillDetector(events, db) {
+  const result = { candidates: 0, observations_written: 0, discarded: 0 };
+
+  // Step 1: Filter out plugin-internal events and self-referential sessions
   const filtered = filterEvents(events);
-  // Extract per-session fingerprints (prompts + toolSeq) — used in Plan 02+03
+  if (filtered.length === 0) return result;
+
+  // Step 2: Extract session fingerprints
   const fingerprints = extractSessionFingerprints(filtered);
+  if (fingerprints.length === 0) return result;
 
-  // Group events by session_id for per-session heuristic checks
-  const bySession = new Map();
-  for (const e of filtered) {
-    if (!bySession.has(e.session_id)) bySession.set(e.session_id, []);
-    bySession.get(e.session_id).push(e);
-  }
-
-  let discarded = 0;
-  const passing = [];
+  // Step 3: Apply negative heuristics per session
+  const viable = [];
   for (const fp of fingerprints) {
-    const sessionEvents = bySession.get(fp.sessionId) || [];
-    const result = applyNegativeHeuristics(fp, sessionEvents);
-    if (!result.passed) {
-      discarded++;
+    const sessionEvents = filtered.filter(e => e.session_id === fp.sessionId);
+    const heuristic = applyNegativeHeuristics(fp, sessionEvents);
+    if (heuristic.passed) {
+      viable.push(fp);
     } else {
-      passing.push(fp);
+      result.discarded++;
+    }
+  }
+  if (viable.length === 0) return result;
+
+  // Step 4: Load existing skill observations for cross-session matching
+  const existingObs = readExistingSkillObservations(db);
+
+  // Step 5: Group sessions by pattern similarity
+  const groups = groupSessionsByPattern(viable, existingObs);
+
+  // Step 6: Score and classify each group
+  const projectRoot = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  for (const group of groups) {
+    const lcsSeq = group.lcsSeq;
+    const stepCount = lcsSeq.length;
+    const sessionCount = group.sessions.length;
+
+    // Classification
+    const firstSession = group.sessions[0];
+    const firstSessionEvents = filtered.filter(e => e.session_id === firstSession.sessionId);
+    const classification = classifyPattern(
+      { toolSeq: lcsSeq },
+      group.sessions,
+      firstSessionEvents
+    );
+
+    if (classification.classification !== 'skill') {
+      result.discarded++;
+      continue;
+    }
+
+    result.candidates++;
+
+    // Scoring
+    const mutationFlag = hasMutation(lcsSeq);
+    const coverage = checkExistingCoverage(group.bestPrompt, projectRoot);
+    const score = computeScore({
+      session_count: sessionCount,
+      step_count: stepCount,
+      param_count: 0, // param_count computed with full tool_input in future enhancement
+      has_mutation: mutationFlag,
+      existing_coverage: coverage,
+    });
+
+    const decision = scoreDecision(score, sessionCount, stepCount);
+    if (decision === 'discard') {
+      result.discarded++;
+      continue;
+    }
+
+    // Compound verb extraction
+    const compoundVerbs = extractCompoundVerbs(group.bestPrompt);
+    const patternKey = compoundVerbs.length >= 2
+      ? `skill:verb-chain:${compoundVerbs.join('-')}`
+      : group.patternKey;
+
+    // Write observation for each new session in this group
+    for (const session of group.sessions) {
+      if (checkCrossAgentDuplicate(db, patternKey, session.sessionId)) continue;
+
+      const evidence = {
+        prompt_fingerprint: normalizePrompt(session.prompts.join(' ')),
+        tool_sequence: lcsSeq,
+        step_count: stepCount,
+        param_count: 0,
+        score: score,
+        decision: decision,
+        session_count_at_time: sessionCount,
+        workflow_similarity: group.sessions.length >= 2
+          ? workflowSimilarity(group.sessions[0].toolSeq, session.toolSeq)
+          : 1.0,
+        compound_verbs: compoundVerbs,
+        classification: classification.classification,
+        classification_reason: classification.reason,
+      };
+
+      writeSkillObservation(db, patternKey, session.sessionId, evidence);
+      result.observations_written++;
     }
   }
 
-  // Similarity matching and scoring wired in Plan 02+03
-  void passing;
-  return { candidates: 0, observations_written: 0, discarded };
+  return result;
 }
-
-export { runSkillDetector };
