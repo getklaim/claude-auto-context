@@ -30,3 +30,44 @@ export function sanitizeSecrets(text) {
   }
   return result;
 }
+
+// --- SPROM-02: Example Generalization Patterns ---
+
+const PATH_PATTERNS = [
+  // Test files
+  { regex: /\S+\.(test|spec)\.(ts|js|tsx|jsx|mjs|py)\b/g, replacement: '{test_file}' },
+  // Source files with directory
+  { regex: /\S+\/\S+\.(ts|js|tsx|jsx|mjs|py|go|rs|java|rb|css|scss|html|vue|svelte)\b/g, replacement: '{source_file}' },
+  // Config files
+  { regex: /\b(tsconfig|package|webpack|vite|jest|eslint|prettier)\.\w+\b/g, replacement: '{config_file}' },
+  // Bare filenames with extension (no path separator)
+  { regex: /\b\w+\.(ts|js|tsx|jsx|mjs|py|go|rs|java|rb)\b/g, replacement: '{file}' },
+];
+
+const CLI_PATTERNS = [
+  // npm/yarn/pnpm commands with args
+  { regex: /\b(npm|yarn|pnpm|bun)\s+(run\s+)?\S+(\s+--\S+)*/g, replacement: '{package_command}' },
+  // git commands with args
+  { regex: /\bgit\s+(push|pull|commit|checkout|merge|rebase)\s+\S*/g, replacement: '{git_command}' },
+  // Generic CLI with flags
+  { regex: /\b\w+\s+--[\w-]+(=\S+)?(\s+--[\w-]+(=\S+)?)*/g, replacement: '{cli_command}' },
+];
+
+export function generalizeExample(promptText, toolSequence) {
+  let result = sanitizeSecrets(promptText);
+
+  for (const { regex, replacement } of PATH_PATTERNS) {
+    regex.lastIndex = 0;
+    result = result.replace(regex, replacement);
+  }
+
+  for (const { regex, replacement } of CLI_PATTERNS) {
+    regex.lastIndex = 0;
+    result = result.replace(regex, replacement);
+  }
+
+  // Tool sequence stays as-is (tool names are generic: Read, Write, etc.)
+  const seqStr = Array.isArray(toolSequence) ? toolSequence.join(' -> ') : '';
+
+  return { generalizedPrompt: result.trim(), toolFlow: seqStr };
+}
