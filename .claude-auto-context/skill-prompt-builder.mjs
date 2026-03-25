@@ -129,3 +129,105 @@ export function loadExistingSkills(root) {
     })
     .filter(Boolean);
 }
+
+// --- SPROM-01, SPROM-04: Prompt Composition ---
+
+function buildNegativeExamples(db, patternKey) {
+  // Find observations that were NOT classified as skill (for "when NOT to use")
+  // Filter by patterns sharing the same verb prefix as the candidate for relevance
+  const prefix = patternKey.split(':').slice(0, 2).join(':'); // e.g. 'skill:verb-chain'
+  const rows = db.prepare(`
+    SELECT evidence FROM observations
+    WHERE pattern_key LIKE ? || '%'
+      AND agent_source = 'skill-agent'
+    ORDER BY created_at DESC
+    LIMIT 50
+  `).all(prefix);
+
+  const reasons = new Set();
+  for (const row of rows) {
+    try {
+      const ev = JSON.parse(row.evidence);
+      if (ev.decision === 'discard' || ev.classification !== 'skill') {
+        if (ev.classification_reason) reasons.add(ev.classification_reason);
+      }
+    } catch {}
+  }
+
+  if (reasons.size === 0) {
+    return '- Single file edits (quick fixes that do not follow a multi-step workflow)\n- Pure exploration sessions (only reading/searching, no modifications)\n- Debugging spirals (repeated error-fix cycles without a stable pattern)';
+  }
+
+  return [...reasons].map(r => `- ${r.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}`).join('\n');
+}
+
+export function buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db) {
+  // Limit to top 3 candidates per batch (context window protection)
+  const topCandidates = candidates.slice(0, 3);
+
+  let prompt = `# Skill Prompt Composition Request\n\n`;
+  prompt += `You are a skill-prompt composer. Analyze the detected workflow patterns below and produce a skill-creator prompt file for each candidate. The prompt file will later be used by skill-creator to generate an actual SKILL.md file.\n\n`;
+
+  prompt += `## Instructions\n\n`;
+  prompt += `For each candidate pattern, write a prompt file to:\n`;
+  prompt += `\`.claude-auto-context/skill-prompts/YYYYMMDD-HHMMSS-{slug}.md\`\n\n`;
+  prompt += `Use current UTC time for the timestamp. The slug should be a kebab-case summary of the skill (e.g., "edit-test-commit").\n\n`;
+  prompt += `Each prompt file must contain ALL four sections: What, When, Why, and When NOT to Use.\n\n`;
+
+  for (let i = 0; i < topCandidates.length; i++) {
+    const c = topCandidates[i];
+    const ev = c.evidence;
+    const verbChain = ev.compound_verbs?.join(', ') || 'multi-step workflow';
+    const toolSeq = ev.tool_sequence?.join(' -> ') || 'unknown';
+
+    // Generalize session examples
+    const examples = c.sessions.slice(0, 3).map(s => {
+      const gen = generalizeExample(s.promptFingerprint, s.toolSequence);
+      return `  - Prompt: "${gen.generalizedPrompt}"\n    Tools: ${gen.toolFlow}`;
+    }).join('\n');
+
+    const negativeExamples = buildNegativeExamples(db, c.patternKey);
+
+    prompt += `---\n\n## Candidate ${i + 1}: ${c.patternKey}\n\n`;
+
+    // What section (SPROM-01)
+    prompt += `### What (Skill Purpose)\n`;
+    prompt += `This skill automates a **${verbChain}** workflow.\n`;
+    prompt += `- Pattern Key: \`${sanitizeSecrets(c.patternKey)}\`\n`;
+    prompt += `- Tool Sequence: ${sanitizeSecrets(toolSeq)}\n`;
+    prompt += `- Score: ${ev.score} (${ev.session_count_at_time} sessions, ${ev.step_count} steps)\n\n`;
+
+    // When section (SPROM-01)
+    prompt += `### When (Trigger Conditions)\n`;
+    prompt += `User says something like:\n`;
+    prompt += examples + '\n\n';
+
+    // Why section (SPROM-01)
+    prompt += `### Why (Automation Value)\n`;
+    prompt += `This pattern appeared in **${c.sessions.length} sessions** with **${ev.step_count} tool steps**, `;
+    prompt += `suggesting high automation value. Score: ${ev.score}.\n\n`;
+
+    // When NOT to use section (SPROM-04)
+    prompt += `### When NOT to Use\n`;
+    prompt += `Do NOT trigger this skill for:\n`;
+    prompt += negativeExamples + '\n\n';
+  }
+
+  // Existing skills context (SINT-04)
+  if (existingSkills.length > 0) {
+    prompt += `---\n\n## Existing Skills (avoid duplication)\n\n`;
+    for (const skill of existingSkills) {
+      prompt += `- **${skill.name}**: ${sanitizeSecrets(skill.description)}\n`;
+    }
+    prompt += `\nDo NOT create a skill that overlaps with any existing skill above.\n\n`;
+  }
+
+  // Bulk prompt excerpt for additional context (SINT-04)
+  if (bulkPrompt) {
+    const truncated = sanitizeSecrets(bulkPrompt.slice(0, 5000));
+    prompt += `---\n\n## Recent Session Data (for context)\n\n`;
+    prompt += `\`\`\`\n${truncated}\n\`\`\`\n`;
+  }
+
+  return prompt;
+}
