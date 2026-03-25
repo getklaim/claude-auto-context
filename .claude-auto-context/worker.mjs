@@ -25,6 +25,44 @@ const STALE_THRESHOLD_S = 200;       // 200s → self-heal (just above AGENT_TIM
 const MAX_RETRIES = 3;
 const AGENT_TIMEOUT_MS = 3 * 60_000; // 3min per agent session
 
+// --- Existing State Scanner ---
+
+function scanExistingRules() {
+  const dirs = [
+    resolve(projectRoot, '.claude', 'rules'),
+    resolve(projectRoot, '.claude', 'rules', 'local'),
+  ];
+  const summaries = [];
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+    for (const f of files) {
+      const content = readFileSync(resolve(dir, f), 'utf-8');
+      const firstLines = content.split('\n').slice(0, 10).join('\n');
+      const rel = dir.includes('local') ? `local/${f}` : f;
+      summaries.push(`### ${rel}\n${firstLines}`);
+    }
+  }
+  if (summaries.length === 0) return '';
+  return `# Existing Rules (${summaries.length} files)\n${summaries.join('\n\n')}`;
+}
+
+function scanExistingSuggestions() {
+  const suggestionsDir = resolve(projectRoot, '.claude-auto-context', 'suggestions');
+  if (!existsSync(suggestionsDir)) return '';
+  const files = readdirSync(suggestionsDir).filter(f => f.endsWith('.md'));
+  if (files.length === 0) return '';
+  const summaries = files.map(f => {
+    const content = readFileSync(resolve(suggestionsDir, f), 'utf-8');
+    const titleMatch = content.match(/^# Suggestion:\s*(.+)/m);
+    const statusMatch = content.match(/^(pending|applied|rejected|failed)$/m);
+    const title = titleMatch?.[1] ?? f;
+    const status = statusMatch?.[1] ?? 'unknown';
+    return `- **${f}**: ${title} [${status}]`;
+  });
+  return `# Existing Suggestions (${files.length} files)\n${summaries.join('\n')}`;
+}
+
 // --- Logging ---
 // NOTE: SIGKILL cannot be caught, so the lock file may be left behind on hard kills.
 // The launcher script handles stale locks via `kill -0` check on next invocation.
@@ -378,6 +416,8 @@ pending
 async function processBatch(events, db) {
   const bulkPrompt = buildBulkPrompt(events);
   const observationsContext = buildObservationsContext(db);
+  const existingRules = scanExistingRules();
+  const existingSuggestions = scanExistingSuggestions();
 
   // ① Snapshot context files (full content) before orchestrator
   const snapshotBefore = takeContentSnapshot(projectRoot);
@@ -389,10 +429,11 @@ async function processBatch(events, db) {
     const result = query({
       prompt: `${bulkPrompt}
 ${observationsContext}
-You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
+${existingRules ? existingRules + '\n\n' : ''}${existingSuggestions ? existingSuggestions + '\n\n' : ''}You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
 You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
+Do NOT create duplicates of existing rules or suggestions listed above.
 
-1. rules-agent — Repeated conventions (2+ sessions)
+1. rules-agent — Conventions or implicit knowledge worth capturing
    **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
    Has access to cross-cycle observations from previous batches.
    Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide (replacing CLAUDE.md additions for global knowledge).
@@ -420,6 +461,7 @@ Call all three agents now.`,
             description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Use when repeated patterns are found across 2+ sessions.",
             prompt: `Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.
 ${observationsContext}
+${existingRules ? '## Already existing rules (DO NOT duplicate these):\n' + existingRules + '\n' : 'No existing rules yet.\n'}
 After analysis, write any new candidate patterns (not yet at 2+ sessions) to .claude-auto-context/pending-observations.json as a JSON array:
 [{"pattern_key": "descriptive-key", "session_id": "sid", "evidence": "what you saw", "agent_source": "rules-agent"}]
 If the file already exists, read it first and append.`,
@@ -429,7 +471,9 @@ If the file already exists, read it first and append.`,
           },
           "suggestion-agent": {
             description: "Detect structural issues and create proposal files in .claude-auto-context/suggestions/. Use when file splits, directory reorganization, or pattern changes are needed.",
-            prompt: "Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.",
+            prompt: `Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.
+
+${existingSuggestions ? '## Already existing suggestions (DO NOT duplicate these):\n' + existingSuggestions : 'No existing suggestions yet.'}`,
             tools: ['Read', 'Write', 'Glob'],
             skills: ['create-suggestion'],
             maxTurns: 10,

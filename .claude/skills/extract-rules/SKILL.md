@@ -10,7 +10,7 @@ Analyze session observation data to find conventions and implicit knowledge, the
 ## Qualification Criteria (ALL must be true)
 
 1. **Not discoverable from code** -- if findable by reading source files, configs, or package.json, it does NOT belong in rules
-2. **Repeated across 2+ sessions** -- a single occurrence is not a stable convention. Check BOTH the current batch AND the "Cross-Cycle Observations" section for session counts.
+2. **Observed in session data** -- even a single clear convention is worth capturing if the pattern is unambiguous. Stronger confidence when seen in 2+ sessions (check BOTH the current batch AND the "Cross-Cycle Observations" section), but do not discard obvious conventions just because they appeared only once.
 3. **Actionable** -- must change Claude's behavior (conventions, prohibitions, preferred patterns)
 
 ### Good Rules (extract these)
@@ -39,10 +39,10 @@ Evidence: observed in sessions [session_id_1, session_id_2].
 
 ## Procedure
 
-1. Read existing rules in `.claude/rules/local/` AND `.claude/rules/` to avoid duplication with both auto-generated and committed team rules
-2. Analyze session data for repeated patterns
+1. Review the existing rules summary provided in your prompt (if any) to avoid duplication with both auto-generated and committed team rules
+2. Analyze session data for conventions and implicit knowledge
 3. For each candidate:
-   a. Verify 2+ sessions
+   a. Verify the pattern is clear and unambiguous (stronger if 2+ sessions, but 1 session OK if obvious)
    b. Verify NOT discoverable from code (use Glob/Read to check)
    c. Verify no duplication with existing rules (local or committed)
 4. Write new rules files to `.claude/rules/local/`
@@ -74,7 +74,7 @@ If the file already exists, read it first and append your entries to the existin
 ## Anti-Patterns
 
 - Do NOT create rules duplicating code or config files
-- Do NOT create rules from a single session observation (unless it already has 1+ in observations)
+- Do NOT create rules from ambiguous or unclear patterns (single session OK if the convention is obvious)
 - Do NOT use overly broad glob patterns
 - Do NOT repeat information already in CLAUDE.md
 - Do NOT create trivial rules ("use semicolons" in a TS project)

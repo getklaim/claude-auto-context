@@ -18,7 +18,7 @@ Structural problems evidenced by session data:
 ## Evidence Requirements
 
 Every suggestion MUST include:
-- At least 3 sessions showing the problem
+- At least 2 sessions showing the problem (1 session OK if the structural issue is severe and obvious)
 - Quantitative metrics (signal ratio, read count vs edit count, etc.)
 - Specific session IDs as evidence
 
@@ -53,11 +53,11 @@ structure | pattern | organization
 
 ## Procedure
 
-1. Read existing suggestions in `.claude-auto-context/suggestions/` to avoid duplicates
+1. Review the existing suggestions summary provided in your prompt (if any) to avoid duplicates
 2. Generate timestamp for filename: `YYYYMMDD-HHMMSS` format using current UTC time (e.g., `20260323-143052`)
 3. Analyze session data for structural patterns
 4. For each candidate:
-   a. Verify 3+ sessions
+   a. Verify 2+ sessions (1 session OK if the structural issue is severe and obvious)
    b. Compute quantitative metrics
    c. Formulate specific, actionable proposal
 5. Write the suggestion file as `YYYYMMDD-HHMMSS-{slug}.md`
