@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-26T01:42:16.507Z"
+last_updated: "2026-03-26T01:55:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 ## Current Position
 
 Phase: 10 (delivery-ux) — EXECUTING
-Plan: 2 of 3
+Plan: 10-01 complete (2 of 3 done)
 
 ## Project Reference
 
@@ -50,6 +50,9 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 - Plan 09-03 complete: skill-agent wired into worker.mjs — import, batchCount counter, modulo-3 gate, query() block (maxTurns:8, maxBudgetUsd:0.50, allowedTools:Read/Write/Glob), skill-prompts/ startup mkdir
 - skill-agent is a sibling to hygiene-agent (not nested in orchestrator) — independent budget/timeout control
 - mkdirSync for skill-prompts/ placed at both startup and inside skill-agent block (defense in depth)
+- Plan 10-01 complete: SINT-05 hard cap enforced in worker.mjs via skill-cap.mjs; checkSkillCap() reads skills-registry.json, writes suggestion at >= 5, else proceeds; 6 unit tests pass
+- SDEL-01 verified correct in Phase 9 code (no changes needed) — buildSkillAgentPrompt() already uses YYYYMMDD-HHMMSS-{slug}.md
+- skill-cap.mjs extraction pattern: side-effectful helpers extracted to separate module for unit testability (avoids bun:sqlite in tests)
 - Plan 10-02 complete: /cac-create-skill SKILL.md created (8-step procedure, delegates to skill-creator, updates skills-registry.json with source_sessions from Evidence Sessions); on-user-prompt-submit.sh extended to scan skill-prompts/ and notify
 - skills-registry.json schema: name, description, generated_date, source_sessions, skill_file, prompt_file
 - registry update lives in /cac-create-skill skill (not worker) — only human-confirmed skills enter registry
