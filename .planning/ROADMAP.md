@@ -10,7 +10,7 @@
 |---|-------|------|-------------|-------|
 | 8 | 4/4 | Complete   | 2026-03-25 | 7 |
 | 9 | 3/3 | Complete | 2026-03-26 | 7 |
-| 10 | Delivery + UX | Prompt files, /cac-create-skill, dependency check, registry, hard cap | SDEL-01..04, SINT-05 | 5 |
+| 10 | 1/3 | In Progress|  | 5 |
 | | **Total** | | | **19** |
 
 ---
