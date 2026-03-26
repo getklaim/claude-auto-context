@@ -664,6 +664,12 @@ async function main() {
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
 
+  // Initialize skills-registry.json if it doesn't exist (SDEL-04 / SINT-05 support)
+  const registryBootstrapPath = resolve(projectRoot, '.claude-auto-context', 'skills-registry.json');
+  if (!existsSync(registryBootstrapPath)) {
+    writeFileSync(registryBootstrapPath, '[]');
+  }
+
   // Quality evaluations table
   db.run(`
     CREATE TABLE IF NOT EXISTS quality_evaluations (
