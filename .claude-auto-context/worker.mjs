@@ -651,6 +651,7 @@ async function main() {
   // Ensure output directories exist
   mkdirSync(resolve(projectRoot, '.claude', 'rules', 'local'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
+  mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
 
   // Quality evaluations table
   db.run(`
