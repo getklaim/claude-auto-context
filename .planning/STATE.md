@@ -1,9 +1,9 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: milestone
-status: unknown
-last_updated: "2026-03-26T02:14:28.377Z"
+milestone_name: Skill Agent
+status: shipped
+last_updated: "2026-03-26T05:40:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 3
@@ -13,48 +13,21 @@ progress:
 
 ## Current Position
 
-Phase: 10 (delivery-ux) — COMPLETE
-Plan: 10-03 complete (3 of 3 done) — Phase 10 fully delivered
+Milestone v1.3 Skill Agent -- SHIPPED 2026-03-26
+All 3 phases (8-10) complete, 10/10 plans delivered, 19/19 requirements satisfied.
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-24)
+See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Continuously improve Claude Code's project understanding by extracting patterns from real usage
-**Current focus:** Phase 10 — delivery-ux
-
-## Phase Map
-
-| Phase | Name | Requirements | Status |
-|-------|------|-------------|--------|
-| 8 | Detection Foundation | SDET-01..06, SINT-03 (7) | Complete |
-| 9 | Prompt Composition + Worker Integration | SPROM-01..04, SINT-01, SINT-02, SINT-04 (7) | Complete |
-| 10 | Delivery + UX | SDEL-01..04, SINT-05 (5) | Complete |
+**Current focus:** Planning next milestone
 
 ## Accumulated Context
 
-- Existing 3-agent orchestrator: rules-agent, suggestion-agent, hooks-agent
-- Worker uses Claim-Confirm queue with self-heal recovery
-- Session events captured via UserPromptSubmit, PostToolUse, Stop hooks
-- v1.0 shipped: core pipeline, v1.1 shipped: hooks-agent, v1.2 shipped: local isolation
-- skill-agent will run as separate query() call ($0.50, maxTurns: 8), not inside existing orchestrator
-- skill-agent runs every 3rd batch; produces prompt files, NOT SKILL.md directly
-- Quality delegation: skill-creator generates actual SKILL.md from prompt files
-- Key research decisions: Jaccard similarity, 3-session minimum, 5-skill hard cap, constrained template
-- Plan 09-01 complete: skill-prompt-builder.mjs created with sanitizeSecrets (8 patterns), generalizeExample (PATH + CLI patterns), getGenerateCandidates (decision=generate + sessions>=3), loadExistingSkills (directory scan), buildSkillAgentPrompt (4 sections: What/When/Why/When-NOT)
-- sanitizeSecrets() must be called before any text reaches LLM — applied to patternKey, toolSeq, descriptions, bulkPrompt
-- global regex safety: reset lastIndex=0 before each replace() call on reused regex instances
-- Plan 09-02 complete: skill-prompt-builder.test.mjs created — 25 tests, all passing (bun test --cwd .claude-auto-context skill-prompt-builder.test.mjs)
-- bun --check does NOT work for test files (describe() fails outside test runner); use bun test directly
-- GitHub token test input must NOT use 'token:' prefix — the generic password pattern fires first and prevents ghp_ pattern from matching
-- Plan 09-03 complete: skill-agent wired into worker.mjs — import, batchCount counter, modulo-3 gate, query() block (maxTurns:8, maxBudgetUsd:0.50, allowedTools:Read/Write/Glob), skill-prompts/ startup mkdir
-- skill-agent is a sibling to hygiene-agent (not nested in orchestrator) — independent budget/timeout control
-- mkdirSync for skill-prompts/ placed at both startup and inside skill-agent block (defense in depth)
-- Plan 10-01 complete: SINT-05 hard cap enforced in worker.mjs via skill-cap.mjs; checkSkillCap() reads skills-registry.json, writes suggestion at >= 5, else proceeds; 6 unit tests pass
-- SDEL-01 verified correct in Phase 9 code (no changes needed) — buildSkillAgentPrompt() already uses YYYYMMDD-HHMMSS-{slug}.md
-- skill-cap.mjs extraction pattern: side-effectful helpers extracted to separate module for unit testability (avoids bun:sqlite in tests)
-- Plan 10-02 complete: /cac-create-skill SKILL.md created (8-step procedure, delegates to skill-creator, updates skills-registry.json with source_sessions from Evidence Sessions); on-user-prompt-submit.sh extended to scan skill-prompts/ and notify
-- skills-registry.json schema: name, description, generated_date, source_sessions, skill_file, prompt_file
-- registry update lives in /cac-create-skill skill (not worker) — only human-confirmed skills enter registry
-- Plan 10-03 complete: skill-creator check in setup.sh (SDEL-03, silent-when-present), skills-registry.json in .gitignore, worker.mjs bootstraps empty [] registry at startup (defense-in-depth for cap-check and skill-detector)
-- Phase 10 complete: all 5 requirements (SDEL-01..04, SINT-05) delivered; v1.3 milestone fully shipped
+- v1.0 shipped: core pipeline (events, worker, 3-agent orchestrator)
+- v1.1 shipped: hooks-agent (pattern detection, hook generation)
+- v1.2 shipped: local isolation (rules/local, claudemd-agent removed)
+- v1.3 shipped: skill-agent (detection, prompt composition, delivery)
+- Current pipeline: 3-agent orchestrator + independent skill-agent
+- Skills tracked in skills-registry.json (max 5 per project)
