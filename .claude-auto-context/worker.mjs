@@ -11,6 +11,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
 import { runSkillDetector } from './skill-detector.mjs';
 import { buildSkillAgentPrompt, loadExistingSkills, getGenerateCandidates } from './skill-prompt-builder.mjs';
+import { checkSkillCap } from './skill-cap.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -524,30 +525,13 @@ If the file already exists, read it first and append.`,
 
   // ②d Skill Agent — LLM-powered prompt composition (every 3rd batch)
   if (batchCount % 3 === 0) {
-    // SINT-05: Hard cap enforcement — max 5 auto-generated skills
-    const registryPath = resolve(projectRoot, '.claude-auto-context', 'skills-registry.json');
-    let registryCount = 0;
-    if (existsSync(registryPath)) {
-      try {
-        const reg = JSON.parse(readFileSync(registryPath, 'utf8'));
-        registryCount = Array.isArray(reg) ? reg.length : 0;
-      } catch {}
-    }
+    // SINT-05: Hard cap enforcement — reads .claude-auto-context/skills-registry.json, max 5 skills
+    const capResult = checkSkillCap(projectRoot, batchCount);
+    const registryCount = capResult.registryCount;
 
     if (registryCount >= 5) {
-      // At cap: write suggestion instead of running skill-agent
-      try {
-        const now = new Date();
-        const ts = now.toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/^(\d{8})(\d{6})/, '$1-$2');
-        const suggestionDir = resolve(projectRoot, '.claude-auto-context', 'suggestions');
-        mkdirSync(suggestionDir, { recursive: true });
-        const suggestionPath = resolve(suggestionDir, `${ts}-skill-cap-reached.md`);
-        const content = `# Suggestion: Skill Auto-Generation Cap Reached (5/5)\n\n## Status\npending\n\n## Category\nskill-cap\n\n## Problem\nThe auto-generated skills registry contains ${registryCount} skills, which is the maximum allowed (5). New skill patterns were detected but cannot be auto-generated until existing skills are reviewed.\n\n## Proposal\nReview existing auto-generated skills in \`.claude/skills/\` and the registry at \`.claude-auto-context/skills-registry.json\`. Archive or delete unused skills to free capacity for new auto-generation.\n\n## Evidence Sessions\n- Detected on batch #${batchCount} at ${now.toISOString()}\n\n## Metrics\n- Registry count: ${registryCount}/5\n- Action required: remove or archive at least 1 skill to resume auto-generation\n`;
-        writeFileSync(suggestionPath, content);
-        log(`skill-agent: cap reached (${registryCount}/5), wrote suggestion to ${suggestionPath}`);
-      } catch (err) {
-        log(`skill-agent: cap suggestion write failed (non-fatal): ${err.message}`);
-      }
+      // At cap: suggestion already written by checkSkillCap
+      log(`skill-agent: cap reached (${registryCount}/5), wrote skill-cap-reached suggestion to ${capResult.suggestionPath}`);
     } else {
       // Under cap: proceed with skill-agent
       try {
