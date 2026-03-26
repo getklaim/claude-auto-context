@@ -10,6 +10,13 @@ if ! command -v bun &> /dev/null; then
   export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 
+# Check if skill-creator is installed (SDEL-03)
+# Silent when present; shows guidance when missing
+if ! command -v skill-creator &> /dev/null; then
+  echo "Auto Context: skill-creator not found — /cac-create-skill will not function."
+  echo "  Install: https://github.com/anthropics/skills (sparse checkout skill-creator)"
+fi
+
 # Ensure local rules directory exists (auto-generated rules go here)
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 mkdir -p "$PROJECT_DIR/.claude/rules/local"
