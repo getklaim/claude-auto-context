@@ -1,15 +1,16 @@
 #!/bin/bash
 # Stop Hook
-# Pipes raw JSON from stdin to collector. No filtering or analysis.
+# Pipes raw JSON from stdin to collector and launches worker.
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+source "$(dirname "$0")/common.sh"
 
 INPUT=$(cat)
 
-echo "$INPUT" | bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" Stop
+echo "$INPUT" | run_collector Stop
 
 # Launch polling worker in background (non-blocking)
 "$PLUGIN_ROOT/scripts/worker-launcher.sh" "$PROJECT_DIR" &
+
+log "Session stopped, worker launched"
 
 exit 0

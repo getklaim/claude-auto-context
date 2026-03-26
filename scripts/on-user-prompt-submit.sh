@@ -1,19 +1,36 @@
 #!/bin/bash
 # UserPromptSubmit Hook
 # 1. Pipes raw user prompt JSON from stdin to collector for DB storage.
-# 2. Scans .claude-auto-context/suggestions/ for pending suggestions and outputs notification.
+# 2. Scans .claude-auto-context/suggestions/ for pending suggestions (cached).
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+source "$(dirname "$0")/common.sh"
+
 SUGGESTIONS_DIR="$PROJECT_DIR/.claude-auto-context/suggestions"
+CACHE_FILE="$PROJECT_DIR/.claude-auto-context/.suggestions-cache"
 
 # stdin is consumed once — capture it first, then pipe to collector
 INPUT=$(cat)
-echo "$INPUT" | bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" UserPromptSubmit
+echo "$INPUT" | run_collector UserPromptSubmit
 
-# Scan for pending suggestions
-if [ -d "$SUGGESTIONS_DIR" ]; then
-  PENDING_TITLES=()
+# Check if cache needs refresh (suggestions dir modified after cache)
+needs_refresh() {
+  [ ! -f "$CACHE_FILE" ] && return 0
+  [ ! -d "$SUGGESTIONS_DIR" ] && return 1
+
+  # Compare modification times
+  if [ "$(stat -f %m "$SUGGESTIONS_DIR" 2>/dev/null || stat -c %Y "$SUGGESTIONS_DIR" 2>/dev/null)" -gt \
+       "$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null)" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Build suggestions cache
+build_cache() {
+  [ ! -d "$SUGGESTIONS_DIR" ] && echo "0" > "$CACHE_FILE" && return
+
+  local count=0
+  local output=""
 
   for f in "$SUGGESTIONS_DIR"/*.md; do
     [ -f "$f" ] || continue
@@ -27,21 +44,31 @@ if [ -d "$SUGGESTIONS_DIR" ]; then
     TITLE=$(grep -m1 "^# " "$f" | sed 's/^# //')
     [ -z "$TITLE" ] && continue
 
-    # Extract numeric ID from filename (e.g., 001-slug.md → 001)
+    # Extract numeric ID from filename
     ID=$(basename "$f" .md | grep -o '^[0-9]*')
 
-    PENDING_TITLES+=("$ID. $TITLE")
+    output+="  $ID. $TITLE\n"
+    ((count++))
   done
 
-  COUNT=${#PENDING_TITLES[@]}
+  echo "$count" > "$CACHE_FILE"
+  [ -n "$output" ] && echo -e "$output" >> "$CACHE_FILE"
+}
 
-  if [ "$COUNT" -gt 0 ]; then
+# Refresh cache if needed
+if needs_refresh; then
+  build_cache
+fi
+
+# Display cached suggestions
+if [ -f "$CACHE_FILE" ]; then
+  COUNT=$(head -1 "$CACHE_FILE")
+
+  if [ "$COUNT" -gt 0 ] 2>/dev/null; then
     echo "─────────────────────────────────────────────────"
     echo "Auto Context — ${COUNT}건의 Suggestion 대기 중"
     echo "─────────────────────────────────────────────────"
-    for t in "${PENDING_TITLES[@]}"; do
-      echo "  $t"
-    done
+    tail -n +2 "$CACHE_FILE"
     echo "/cac-apply 로 적용"
     echo "─────────────────────────────────────────────────"
   fi
