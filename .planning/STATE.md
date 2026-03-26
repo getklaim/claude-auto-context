@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: milestone
 status: in_progress
-last_updated: "2026-03-26T00:45:00.000Z"
+last_updated: "2026-03-26T01:05:00.000Z"
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 ## Current Position
 
-Phase: 09 (prompt-composition-worker-integration) — EXECUTING
-Plan: 3 of 3 (Plans 01 and 02 complete)
+Phase: 09 (prompt-composition-worker-integration) — COMPLETE
+Phase: 10 (delivery-ux) — NEXT
 
 ## Project Reference
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 | Phase | Name | Requirements | Status |
 |-------|------|-------------|--------|
 | 8 | Detection Foundation | SDET-01..06, SINT-03 (7) | Complete |
-| 9 | Prompt Composition + Worker Integration | SPROM-01..04, SINT-01, SINT-02, SINT-04 (7) | Pending |
+| 9 | Prompt Composition + Worker Integration | SPROM-01..04, SINT-01, SINT-02, SINT-04 (7) | Complete |
 | 10 | Delivery + UX | SDEL-01..04, SINT-05 (5) | Pending |
 
 ## Accumulated Context
@@ -47,3 +47,6 @@ See: .planning/PROJECT.md (updated 2026-03-24)
 - Plan 09-02 complete: skill-prompt-builder.test.mjs created — 25 tests, all passing (bun test --cwd .claude-auto-context skill-prompt-builder.test.mjs)
 - bun --check does NOT work for test files (describe() fails outside test runner); use bun test directly
 - GitHub token test input must NOT use 'token:' prefix — the generic password pattern fires first and prevents ghp_ pattern from matching
+- Plan 09-03 complete: skill-agent wired into worker.mjs — import, batchCount counter, modulo-3 gate, query() block (maxTurns:8, maxBudgetUsd:0.50, allowedTools:Read/Write/Glob), skill-prompts/ startup mkdir
+- skill-agent is a sibling to hygiene-agent (not nested in orchestrator) — independent budget/timeout control
+- mkdirSync for skill-prompts/ placed at both startup and inside skill-agent block (defense in depth)
