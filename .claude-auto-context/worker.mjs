@@ -524,53 +524,80 @@ If the file already exists, read it first and append.`,
 
   // ②d Skill Agent — LLM-powered prompt composition (every 3rd batch)
   if (batchCount % 3 === 0) {
-    try {
-      const candidates = getGenerateCandidates(db);
-      if (candidates.length > 0) {
-        const existingSkills = loadExistingSkills(projectRoot);
-        const skillPrompt = buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db);
+    // SINT-05: Hard cap enforcement — max 5 auto-generated skills
+    const registryPath = resolve(projectRoot, '.claude-auto-context', 'skills-registry.json');
+    let registryCount = 0;
+    if (existsSync(registryPath)) {
+      try {
+        const reg = JSON.parse(readFileSync(registryPath, 'utf8'));
+        registryCount = Array.isArray(reg) ? reg.length : 0;
+      } catch {}
+    }
 
-        log(`skill-agent: ${candidates.length} candidates, composing prompts (batch #${batchCount})`);
-
-        // Ensure output directory exists
-        mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
-
-        const skillAc = new AbortController();
-        const skillTimer = setTimeout(() => skillAc.abort(), AGENT_TIMEOUT_MS);
-
-        try {
-          const skillResult = query({
-            prompt: skillPrompt,
-            options: {
-              model: 'sonnet',
-              cwd: projectRoot,
-              allowedTools: ['Read', 'Write', 'Glob'],
-              permissionMode: 'bypassPermissions',
-              allowDangerouslySkipPermissions: true,
-              abortController: skillAc,
-              maxTurns: 8,
-              maxBudgetUsd: 0.50,
-              persistSession: false,
-              settingSources: ['project'],
-              stderr: (data) => log(`[skill-stderr] ${data}`),
-            }
-          });
-
-          for await (const message of skillResult) {
-            if (message.type === 'result') {
-              log(`skill-agent ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
-            }
-          }
-        } catch (err) {
-          log(`skill-agent: query failed (non-fatal): ${err.message}`);
-        } finally {
-          clearTimeout(skillTimer);
-        }
-      } else {
-        log(`skill-agent: no generate-ready candidates, skipping (batch #${batchCount})`);
+    if (registryCount >= 5) {
+      // At cap: write suggestion instead of running skill-agent
+      try {
+        const now = new Date();
+        const ts = now.toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/^(\d{8})(\d{6})/, '$1-$2');
+        const suggestionDir = resolve(projectRoot, '.claude-auto-context', 'suggestions');
+        mkdirSync(suggestionDir, { recursive: true });
+        const suggestionPath = resolve(suggestionDir, `${ts}-skill-cap-reached.md`);
+        const content = `# Suggestion: Skill Auto-Generation Cap Reached (5/5)\n\n## Status\npending\n\n## Category\nskill-cap\n\n## Problem\nThe auto-generated skills registry contains ${registryCount} skills, which is the maximum allowed (5). New skill patterns were detected but cannot be auto-generated until existing skills are reviewed.\n\n## Proposal\nReview existing auto-generated skills in \`.claude/skills/\` and the registry at \`.claude-auto-context/skills-registry.json\`. Archive or delete unused skills to free capacity for new auto-generation.\n\n## Evidence Sessions\n- Detected on batch #${batchCount} at ${now.toISOString()}\n\n## Metrics\n- Registry count: ${registryCount}/5\n- Action required: remove or archive at least 1 skill to resume auto-generation\n`;
+        writeFileSync(suggestionPath, content);
+        log(`skill-agent: cap reached (${registryCount}/5), wrote suggestion to ${suggestionPath}`);
+      } catch (err) {
+        log(`skill-agent: cap suggestion write failed (non-fatal): ${err.message}`);
       }
-    } catch (err) {
-      log(`skill-agent: failed (non-fatal): ${err.message}`);
+    } else {
+      // Under cap: proceed with skill-agent
+      try {
+        const candidates = getGenerateCandidates(db);
+        if (candidates.length > 0) {
+          const existingSkills = loadExistingSkills(projectRoot);
+          const skillPrompt = buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db);
+
+          log(`skill-agent: ${candidates.length} candidates, composing prompts (batch #${batchCount})`);
+
+          // Ensure output directory exists
+          mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
+
+          const skillAc = new AbortController();
+          const skillTimer = setTimeout(() => skillAc.abort(), AGENT_TIMEOUT_MS);
+
+          try {
+            const skillResult = query({
+              prompt: skillPrompt,
+              options: {
+                model: 'sonnet',
+                cwd: projectRoot,
+                allowedTools: ['Read', 'Write', 'Glob'],
+                permissionMode: 'bypassPermissions',
+                allowDangerouslySkipPermissions: true,
+                abortController: skillAc,
+                maxTurns: 8,
+                maxBudgetUsd: 0.50,
+                persistSession: false,
+                settingSources: ['project'],
+                stderr: (data) => log(`[skill-stderr] ${data}`),
+              }
+            });
+
+            for await (const message of skillResult) {
+              if (message.type === 'result') {
+                log(`skill-agent ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
+              }
+            }
+          } catch (err) {
+            log(`skill-agent: query failed (non-fatal): ${err.message}`);
+          } finally {
+            clearTimeout(skillTimer);
+          }
+        } else {
+          log(`skill-agent: no generate-ready candidates, skipping (batch #${batchCount})`);
+        }
+      } catch (err) {
+        log(`skill-agent: failed (non-fatal): ${err.message}`);
+      }
     }
   }
 
