@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      ".claude/rules/local/**"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/dgsw67/claude-auto-context/.claude/hooks/skill-md-dual-dir-sync-warn.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
