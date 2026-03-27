@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env zsh
 # Auto-cleanup stale rules and skills
 # Runs silently on session start via Setup hook
 
@@ -10,8 +10,8 @@ SKILLS_DIR="$PROJECT_DIR/.claude/skills"
 ROOT_SKILLS_DIR="$PROJECT_DIR/skills"
 
 # --- Rules Cleanup ---
-# Delete rules without globs: frontmatter (not project-scoped)
 # Delete rules with globs that match 0 files (stale references)
+# Rules without globs are project-wide rules — keep them
 
 cleanup_rules() {
   [[ -d "$RULES_DIR" ]] || return 0
@@ -26,23 +26,21 @@ cleanup_rules() {
     globs=$(echo "$frontmatter" | grep '^globs:' | sed 's/^globs:[[:space:]]*["'"'"']\{0,1\}\([^"'"'"']*\)["'"'"']\{0,1\}/\1/' || true)
 
     if [[ -z "$globs" ]]; then
-      # No globs = not project-scoped, delete
-      rm -f "$rule_file"
+      # No globs = project-wide rule, keep it
       continue
     fi
 
     # Check if globs match any files (handle comma-separated globs)
-    IFS=',' read -ra glob_patterns <<< "$globs"
+    IFS=',' read -rA glob_patterns <<< "$globs"
     found=0
+
+    # Enable recursive globbing and empty-match safety (zsh built-in)
+    setopt EXTENDED_GLOB NULL_GLOB 2>/dev/null
+
     for pattern in "${glob_patterns[@]}"; do
       pattern=$(echo "$pattern" | xargs)  # trim whitespace
-      # Use find instead of compgen for better compatibility
-      if find "$PROJECT_DIR" -path "$PROJECT_DIR/$pattern" -print -quit 2>/dev/null | grep -q .; then
-        found=1
-        break
-      fi
-      # Also try with shell globbing
-      if ls $PROJECT_DIR/$pattern 1>/dev/null 2>&1; then
+      files=( $PROJECT_DIR/$pattern )
+      if [[ ${#files[@]} -gt 0 ]]; then
         found=1
         break
       fi
@@ -56,7 +54,8 @@ cleanup_rules() {
 }
 
 # --- Skills Cleanup ---
-# Delete skills without name: or description: in frontmatter
+# Warn about skills missing name: or description: in frontmatter
+# Only delete if stale: true is explicitly set
 
 cleanup_skills_in_dir() {
   local skills_dir="$1"
@@ -73,10 +72,14 @@ cleanup_skills_in_dir() {
 
     has_name=$(echo "$frontmatter" | grep -c '^name:' || true)
     has_desc=$(echo "$frontmatter" | grep -c '^description:' || true)
+    is_stale=$(echo "$frontmatter" | grep -c '^stale:[[:space:]]*true' || true)
 
-    if [[ $has_name -eq 0 ]] || [[ $has_desc -eq 0 ]]; then
-      # Missing required frontmatter, delete skill directory
+    if [[ $is_stale -gt 0 ]]; then
+      # Explicitly marked as stale, delete
       rm -rf "$skill_dir"
+    elif [[ $has_name -eq 0 ]] || [[ $has_desc -eq 0 ]]; then
+      # Missing frontmatter, warn but don't delete
+      echo "[auto-cleanup] WARNING: $(basename "$skill_dir") is missing name/description in SKILL.md frontmatter"
     fi
   done
 }
