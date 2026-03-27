@@ -484,7 +484,11 @@ If the file already exists, read it first and append.`,
 
     for await (const message of result) {
       if (message.type === 'result') {
-        log(`session ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
+        const denials = message.permission_denials?.length ?? 0;
+        log(`agent-batch session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
+        if (denials > 0) {
+          log(`agent-batch WARNING: ${denials} permission denial(s) detected — check settings.json permissions`);
+        }
       }
     }
   } finally {
@@ -561,7 +565,8 @@ If the file already exists, read it first and append.`,
 
           for await (const message of skillResult) {
             if (message.type === 'result') {
-              log(`skill-agent ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
+              const denials = message.permission_denials?.length ?? 0;
+              log(`skill-agent session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
             }
           }
         } catch (err) {
@@ -616,7 +621,8 @@ If the file already exists, read it first and append.`,
 
     for await (const message of hygieneResult) {
       if (message.type === 'result') {
-        log(`hygiene ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
+        const denials = message.permission_denials?.length ?? 0;
+        log(`hygiene session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
       }
     }
   } catch (err) {
