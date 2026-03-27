@@ -104,8 +104,8 @@ export function getGenerateCandidates(db) {
     });
   }
 
-  // Return only candidates with 3+ sessions (generate threshold)
-  return [...byPattern.values()].filter(c => c.sessions.length >= 3);
+  // Return all candidates — agent decides based on judgment criteria
+  return [...byPattern.values()];
 }
 
 export function loadExistingSkills(root) {
@@ -170,7 +170,7 @@ export function buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db
 
   prompt += `## Instructions\n\n`;
   prompt += `For each candidate pattern, write a prompt file to:\n`;
-  prompt += `\`.claude-auto-context/skill-prompts/YYYYMMDD-HHMMSS-{slug}.md\`\n\n`;
+  prompt += `\`.claude-auto-context/skill-prompts/skill-YYYYMMDD-HHMMSS-{slug}.md\`\n\n`;
   prompt += `Use current UTC time for the timestamp. The slug should be a kebab-case summary of the skill (e.g., "edit-test-commit").\n\n`;
   prompt += `Each prompt file must contain ALL four sections: What, When, Why, and When NOT to Use.\n\n`;
 

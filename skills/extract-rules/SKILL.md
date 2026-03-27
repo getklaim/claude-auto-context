@@ -1,6 +1,6 @@
 ---
 name: extract-rules
-description: Extract conventions and implicit knowledge from session data into .claude/rules/local/ files. USE WHEN repeated patterns are found across 2+ sessions.
+description: Extract conventions and implicit knowledge from session data into .claude/rules/local/ files. USE WHEN repeated patterns are found across sessions.
 ---
 
 # Extract Rules
@@ -10,8 +10,7 @@ Analyze session observation data to find conventions and implicit knowledge, the
 ## Qualification Criteria (ALL must be true)
 
 1. **Not discoverable from code** -- if findable by reading source files, configs, or package.json, it does NOT belong in rules
-2. **Repeated across 2+ sessions** -- a single occurrence is not a stable convention. Check BOTH the current batch AND the "Cross-Cycle Observations" section for session counts.
-3. **Actionable** -- must change Claude's behavior (conventions, prohibitions, preferred patterns)
+2. **Actionable** -- must change Claude's behavior (conventions, prohibitions, preferred patterns)
 
 ### Good Rules (extract these)
 - "Error handling uses Result type, not try-catch" (convention not written anywhere)
@@ -42,9 +41,8 @@ Evidence: observed in sessions [session_id_1, session_id_2].
 1. Read existing rules in `.claude/rules/local/` AND `.claude/rules/` to avoid duplication with both auto-generated and committed team rules
 2. Analyze session data for repeated patterns
 3. For each candidate:
-   a. Verify 2+ sessions
-   b. Verify NOT discoverable from code (use Glob/Read to check)
-   c. Verify no duplication with existing rules (local or committed)
+   a. Verify NOT discoverable from code (use Glob/Read to check)
+   b. Verify no duplication with existing rules (local or committed)
 4. Write new rules files to `.claude/rules/local/`
 5. Use narrow glob scoping (prefer `src/auth/**` over `**`)
 6. For project-wide knowledge (not file-scoped), omit `globs:` from frontmatter — the rule will apply globally
@@ -52,8 +50,8 @@ Evidence: observed in sessions [session_id_1, session_id_2].
 ## Cross-Cycle Observations
 
 You may receive a "Cross-Cycle Observations" section listing patterns seen in prior poll cycles.
-- If a pattern in the current batch + observations reaches 2+ distinct sessions → create the rule
-- If a pattern is new (only 1 session so far) → write it to `.claude-auto-context/pending-observations.json` for future cycles
+- Use observations as additional context when judging whether a pattern warrants a rule
+- If a pattern is not yet strong enough to warrant a rule → write it to `.claude-auto-context/pending-observations.json` for future cycles
 
 ### Writing Observations
 
@@ -74,7 +72,7 @@ If the file already exists, read it first and append your entries to the existin
 ## Anti-Patterns
 
 - Do NOT create rules duplicating code or config files
-- Do NOT create rules from a single session observation (unless it already has 1+ in observations)
+- Do NOT create rules for patterns that are likely one-off or accidental
 - Do NOT use overly broad glob patterns
 - Do NOT repeat information already in CLAUDE.md
 - Do NOT create trivial rules ("use semicolons" in a TS project)

@@ -405,13 +405,8 @@ function computeScore(factors) {
 }
 
 function scoreDecision(score, sessionCount, stepCount) {
-  // Hard gate: step_count < 5 is always discarded regardless of score
-  if (stepCount < 5) return 'discard';
-  // Generate threshold
-  if (score >= 10.0 && sessionCount >= 3) return 'generate';
-  // Observe threshold
-  if (score >= 5.0) return 'observe';
-  // Below all thresholds
+  // All candidates flow directly to skill-agent — LLM decides quality
+  if (score > 0) return 'generate';
   return 'discard';
 }
 
@@ -443,34 +438,24 @@ function classifyPattern(fingerprint, sessions, events) {
   const { toolSeq } = fingerprint;
   const stepCount = toolSeq.length;
 
-  // Step 1: Too few steps — not a skill
-  if (stepCount < 5) {
-    return { classification: 'rules-or-hooks', reason: 'step_count < 5' };
-  }
-
-  // Step 2: No NL trigger — automated action, delegate to hooks
+  // Step 1: No NL trigger — automated action, delegate to hooks
   if (!hasNLTrigger(events)) {
     return { classification: 'hooks-agent', reason: 'no NL trigger' };
   }
 
-  // Step 3: Single Bash command pattern
+  // Step 2: Single Bash command pattern
   if (toolSeq.length <= 2 && toolSeq.includes('Bash')) {
     return { classification: 'hooks-agent', reason: 'single Bash pattern' };
   }
 
-  // Step 4: No decision points AND step_count < 8 — could be a hook chain
-  if (!hasDecisionPoints(sessions) && stepCount < 8) {
-    return { classification: 'hooks-agent', reason: 'linear chain, step_count < 8' };
-  }
-
-  // Step 5: Full skill candidate
+  // Step 3: Full skill candidate
   const mutation = hasMutation(toolSeq);
   if (mutation) {
     return { classification: 'skill', reason: 'NL trigger + mutation + 5+ steps' };
   }
 
-  // Step 6: Ambiguous — discard (false-negative bias)
-  return { classification: 'discard', reason: 'ambiguous: no mutation despite 5+ steps' };
+  // Step 4: Ambiguous — discard (false-negative bias)
+  return { classification: 'discard', reason: 'ambiguous: no mutation' };
 }
 
 function checkCrossAgentDuplicate(db, patternKey, sessionId) {
