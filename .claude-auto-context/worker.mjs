@@ -434,14 +434,14 @@ After analysis, write any new candidate patterns (not yet strong enough for a ru
 If the file already exists, read it first and append.`,
             tools: ['Read', 'Write', 'Edit', 'Glob'],
             skills: ['extract-rules'],
-            maxTurns: 10,
+            maxTurns: 20,
           },
           "suggestion-agent": {
             description: "Detect structural issues and create proposal files in .claude-auto-context/suggestions/. Use when file splits, directory reorganization, or pattern changes are needed.",
             prompt: "Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.",
             tools: ['Read', 'Write', 'Glob'],
             skills: ['create-suggestion'],
-            maxTurns: 10,
+            maxTurns: 20,
           },
           "hooks-agent": {
             description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
@@ -476,7 +476,7 @@ After analysis, write any new candidate patterns (not yet at threshold) to .clau
 [{"pattern_key": "descriptive-key", "session_id": "sid", "evidence": "what you saw", "agent_source": "hooks-agent"}]
 If the file already exists, read it first and append.`,
             tools: ['Read', 'Write', 'Edit', 'Glob'],
-            maxTurns: 10,
+            maxTurns: 20,
           },
         },
       }
@@ -484,7 +484,7 @@ If the file already exists, read it first and append.`,
 
     for await (const message of result) {
       if (message.type === 'result') {
-        log(`session ${message.subtype}: ${message.result?.slice(0, 200) ?? ''}`);
+        log(`session ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
       }
     }
   } finally {
@@ -551,7 +551,7 @@ If the file already exists, read it first and append.`,
               permissionMode: 'bypassPermissions',
               allowDangerouslySkipPermissions: true,
               abortController: skillAc,
-              maxTurns: 8,
+              maxTurns: 12,
               maxBudgetUsd: 0.50,
               persistSession: false,
               settingSources: ['project'],
@@ -606,7 +606,7 @@ If the file already exists, read it first and append.`,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         abortController: hygieneAc,
-        maxTurns: 10,
+        maxTurns: 15,
         maxBudgetUsd: 0.50,
         persistSession: false,
         settingSources: ['project'],
@@ -616,7 +616,7 @@ If the file already exists, read it first and append.`,
 
     for await (const message of hygieneResult) {
       if (message.type === 'result') {
-        log(`hygiene ${message.subtype}: ${message.result?.slice(0, 200) ?? ''}`);
+        log(`hygiene ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
       }
     }
   } catch (err) {
@@ -655,6 +655,24 @@ async function main() {
   mkdirSync(resolve(projectRoot, '.claude', 'rules', 'local'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
+
+  // Ensure .claude/settings.json exists so sub-agents have Write permission for rules/suggestions
+  const settingsPath = resolve(projectRoot, '.claude', 'settings.json');
+  if (!existsSync(settingsPath)) {
+    try {
+      writeFileSync(settingsPath, JSON.stringify({
+        permissions: {
+          allow: [
+            ".claude/rules/local/**",
+            ".claude-auto-context/suggestions/**"
+          ]
+        }
+      }, null, 2));
+      log(`created ${settingsPath} with permissions.allow for rules and suggestions`);
+    } catch (err) {
+      log(`warning: failed to create settings.json: ${err.message}`);
+    }
+  }
 
   // Initialize skills-registry.json if it doesn't exist (SDEL-04 / SINT-05 support)
   const registryBootstrapPath = resolve(projectRoot, '.claude-auto-context', 'skills-registry.json');

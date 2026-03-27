@@ -55,7 +55,19 @@ Continuously improve Claude Code's project understanding by extracting patterns 
 
 <!-- Current scope. Building toward these. -->
 
-(None yet -- define in next milestone)
+(Defined in REQUIREMENTS.md for v1.4)
+
+## Current Milestone: v1.4 Agent Output Quality
+
+**Goal:** Ensure agents produce genuinely useful outputs by fixing infrastructure blockers, strengthening judgment criteria, and adding observability.
+
+**Target features:**
+- Fix rules-agent write permission failures (found 3 patterns but couldn't write them)
+- Fix hooks-agent silent failures (no results logged in target projects)
+- Prevent stale plugin versions from running removed agents (claudemd-agent ghost)
+- Add per-agent activity logging (what was considered, what was decided, why)
+- Improve judgment prompts based on dogfooding results (89% suggestion quality baseline)
+- Add output quality measurement (useful vs noise ratio tracking)
 
 ### Out of Scope
 
@@ -101,4 +113,4 @@ Continuously improve Claude Code's project understanding by extracting patterns 
 | Every-3rd-batch cadence | Workflow patterns change slowly; reduces cost | Good |
 
 ---
-*Last updated: 2026-03-26 after v1.3 milestone*
+*Last updated: 2026-03-27 after v1.4 milestone start*
