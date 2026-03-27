@@ -11,7 +11,6 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
 import { runSkillDetector } from './skill-detector.mjs';
 import { buildSkillAgentPrompt, loadExistingSkills, getGenerateCandidates } from './skill-prompt-builder.mjs';
-import { checkSkillCap } from './skill-cap.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -55,7 +54,7 @@ function shouldRunHygiene(root) {
     rulesCount += readdirSync(localRulesDir).filter(f => f.endsWith('.md')).length;
   }
 
-  return rulesCount >= 2;
+  return rulesCount > 0;
 }
 
 // --- Queue Operations ---
@@ -134,7 +133,7 @@ function buildObservationsContext(db) {
 
   let out = `\n# Cross-Cycle Observations (${rows.length} patterns from previous cycles)\n`;
   out += `These are candidate patterns observed in prior poll cycles but not yet promoted to rules/hooks.\n`;
-  out += `Use these to judge whether a pattern in the current batch reaches the 2+ session threshold.\n\n`;
+  out += `Use these as context when judging whether a pattern in the current batch warrants promotion.\n\n`;
 
   for (const r of rows) {
     out += `- **${r.pattern_key}** (${r.session_count} sessions: ${r.sessions})\n`;
@@ -302,9 +301,10 @@ ${claudeMd || '(empty)'}
 ## Your 5-Point Checklist
 
 When you find an issue, create a suggestion file at:
-\`.claude-auto-context/suggestions/YYYYMMDD-HHMMSS-hygiene-{slug}.md\`
+\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
-Use current UTC time for the timestamp (e.g. 20260323-143052).
+Use current UTC time for the timestamp (e.g. hygiene-20260323-143052-stale-glob.md).
+**IMPORTANT**: Always use the \`hygiene-\` prefix. Do NOT infer a naming pattern from existing files in the directory.
 
 ### H-01: Duplicate Detection
 Compare all rules file pairs (committed + local). Flag two rules that prescribe
@@ -340,7 +340,7 @@ Critical rules with narrow globs should be flagged.
 ## Output Format
 
 Create one file per issue:
-\`.claude-auto-context/suggestions/YYYYMMDD-HHMMSS-hygiene-{slug}.md\`
+\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use exactly this format:
 
@@ -349,6 +349,9 @@ Use exactly this format:
 
 ## Status
 pending
+
+## Created
+{ISO 8601 UTC timestamp}
 
 ## Category
 {hygiene-duplicate | hygiene-contradiction | hygiene-stale |
@@ -398,7 +401,7 @@ ${observationsContext}
 You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
 You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
 
-1. rules-agent — Repeated conventions (2+ sessions)
+1. rules-agent — Repeated conventions
    **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
    Has access to cross-cycle observations from previous batches.
    Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide (replacing CLAUDE.md additions for global knowledge).
@@ -423,10 +426,10 @@ Call all three agents now.`,
         stderr: (data) => log(`[stderr] ${data}`),
         agents: {
           "rules-agent": {
-            description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Use when repeated patterns are found across 2+ sessions.",
+            description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Analyzes session patterns and cross-cycle observations to judge which conventions warrant rules.",
             prompt: `Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.
 ${observationsContext}
-After analysis, write any new candidate patterns (not yet at 2+ sessions) to .claude-auto-context/pending-observations.json as a JSON array:
+After analysis, write any new candidate patterns (not yet strong enough for a rule) to .claude-auto-context/pending-observations.json as a JSON array:
 [{"pattern_key": "descriptive-key", "session_id": "sid", "evidence": "what you saw", "agent_source": "rules-agent"}]
 If the file already exists, read it first and append.`,
             tools: ['Read', 'Write', 'Edit', 'Glob'],
@@ -455,11 +458,10 @@ ${observationsContext}
 4. **Test-before-stop**: Test suite run at session end repeatedly
    → Generate Stop hook to auto-run tests
 
-## Threshold rules
-- Formatter/linter: need 3+ sessions (check observations for cross-cycle count)
-- Dangerous commands: generate immediately (zero-tolerance)
-- Secret writes: generate immediately (zero-tolerance)
-- Test patterns: need 3+ sessions
+## Judgment guidance
+- Use the session data and cross-cycle observations to judge whether a pattern is a genuine habit vs one-off noise
+- Consider: frequency, consistency across sessions, user intent signals
+- Dangerous commands (rm -rf, force push) and secret writes (.env, .pem) warrant immediate action regardless of frequency
 
 ## Output rules
 - Write hook scripts to target project's .claude/hooks/ directory
@@ -525,63 +527,53 @@ If the file already exists, read it first and append.`,
 
   // ②d Skill Agent — LLM-powered prompt composition (every 3rd batch)
   if (batchCount % 3 === 0) {
-    // SINT-05: Hard cap enforcement — reads .claude-auto-context/skills-registry.json, max 5 skills
-    const capResult = checkSkillCap(projectRoot, batchCount);
-    const registryCount = capResult.registryCount;
+    try {
+      const candidates = getGenerateCandidates(db);
+      if (candidates.length > 0) {
+        const existingSkills = loadExistingSkills(projectRoot);
+        const skillPrompt = buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db);
 
-    if (registryCount >= 5) {
-      // At cap: suggestion already written by checkSkillCap
-      log(`skill-agent: cap reached (${registryCount}/5), wrote skill-cap-reached suggestion to ${capResult.suggestionPath}`);
-    } else {
-      // Under cap: proceed with skill-agent
-      try {
-        const candidates = getGenerateCandidates(db);
-        if (candidates.length > 0) {
-          const existingSkills = loadExistingSkills(projectRoot);
-          const skillPrompt = buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db);
+        log(`skill-agent: ${candidates.length} candidates, ${existingSkills.length} existing skills, composing prompts (batch #${batchCount})`);
 
-          log(`skill-agent: ${candidates.length} candidates, composing prompts (batch #${batchCount})`);
+        // Ensure output directory exists
+        mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
 
-          // Ensure output directory exists
-          mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
+        const skillAc = new AbortController();
+        const skillTimer = setTimeout(() => skillAc.abort(), AGENT_TIMEOUT_MS);
 
-          const skillAc = new AbortController();
-          const skillTimer = setTimeout(() => skillAc.abort(), AGENT_TIMEOUT_MS);
-
-          try {
-            const skillResult = query({
-              prompt: skillPrompt,
-              options: {
-                model: 'sonnet',
-                cwd: projectRoot,
-                allowedTools: ['Read', 'Write', 'Glob'],
-                permissionMode: 'bypassPermissions',
-                allowDangerouslySkipPermissions: true,
-                abortController: skillAc,
-                maxTurns: 8,
-                maxBudgetUsd: 0.50,
-                persistSession: false,
-                settingSources: ['project'],
-                stderr: (data) => log(`[skill-stderr] ${data}`),
-              }
-            });
-
-            for await (const message of skillResult) {
-              if (message.type === 'result') {
-                log(`skill-agent ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
-              }
+        try {
+          const skillResult = query({
+            prompt: skillPrompt,
+            options: {
+              model: 'sonnet',
+              cwd: projectRoot,
+              allowedTools: ['Read', 'Write', 'Glob'],
+              permissionMode: 'bypassPermissions',
+              allowDangerouslySkipPermissions: true,
+              abortController: skillAc,
+              maxTurns: 8,
+              maxBudgetUsd: 0.50,
+              persistSession: false,
+              settingSources: ['project'],
+              stderr: (data) => log(`[skill-stderr] ${data}`),
             }
-          } catch (err) {
-            log(`skill-agent: query failed (non-fatal): ${err.message}`);
-          } finally {
-            clearTimeout(skillTimer);
+          });
+
+          for await (const message of skillResult) {
+            if (message.type === 'result') {
+              log(`skill-agent ${message.subtype}: cost=$${message.total_cost_usd ?? '?'} ${message.result?.slice(0, 200) ?? ''}`);
+            }
           }
-        } else {
-          log(`skill-agent: no generate-ready candidates, skipping (batch #${batchCount})`);
+        } catch (err) {
+          log(`skill-agent: query failed (non-fatal): ${err.message}`);
+        } finally {
+          clearTimeout(skillTimer);
         }
-      } catch (err) {
-        log(`skill-agent: failed (non-fatal): ${err.message}`);
+      } else {
+        log(`skill-agent: no generate-ready candidates, skipping (batch #${batchCount})`);
       }
+    } catch (err) {
+      log(`skill-agent: failed (non-fatal): ${err.message}`);
     }
   }
 
@@ -594,7 +586,7 @@ If the file already exists, read it first and append.`,
   }
 
   if (!shouldRunHygiene(projectRoot)) {
-    log('hygiene: below minimum threshold (< 2 rules files), skipping');
+    log('hygiene: no rules files found, skipping');
     return;
   }
 
