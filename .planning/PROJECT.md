@@ -62,10 +62,11 @@ Continuously improve Claude Code's project understanding by extracting patterns 
 **Goal:** Ensure agents produce genuinely useful outputs by fixing infrastructure blockers, strengthening judgment criteria, and adding observability.
 
 **Target features:**
-- Fix rules-agent write permission failures (found 3 patterns but couldn't write them)
+- ~~Fix rules-agent write permission failures~~ — Validated in Phase 11: settings.json auto-created at startup
 - Fix hooks-agent silent failures (no results logged in target projects)
 - Prevent stale plugin versions from running removed agents (claudemd-agent ghost)
-- Add per-agent activity logging (what was considered, what was decided, why)
+- ~~Add per-agent activity logging~~ — Validated in Phase 11: structured key=value logging with session IDs
+- ~~Fix agent mid-analysis truncation~~ — Validated in Phase 11: maxTurns increased for all sub-agents
 - Improve judgment prompts based on dogfooding results (89% suggestion quality baseline)
 - Add output quality measurement (useful vs noise ratio tracking)
 
