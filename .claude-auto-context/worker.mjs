@@ -20,9 +20,9 @@ const dbPath = resolve(dbDir, 'claude-auto-context.db');
 const lockPath = resolve(projectRoot, '.claude-auto-context', 'worker.lock');
 const logPath = resolve(dbDir, 'worker.log');
 
-const STALE_THRESHOLD_S = 200;       // 200s → self-heal (just above AGENT_TIMEOUT_MS/1000)
+const STALE_THRESHOLD_S = 650;        // 650s → self-heal (just above AGENT_TIMEOUT_MS/1000)
 const MAX_RETRIES = 3;
-const AGENT_TIMEOUT_MS = 3 * 60_000; // 3min per agent session
+const AGENT_TIMEOUT_MS = 10 * 60_000; // 10min per agent session
 
 // --- Logging ---
 // NOTE: SIGKILL cannot be caught, so the lock file may be left behind on hard kills.
@@ -290,27 +290,33 @@ function buildExistingContextSummary(root) {
   summary += `\n## Skills (${skills.length} dirs)\n`;
   for (const s of skills) summary += `- ${s.file}: ${s.description || s.name}\n`;
 
-  // 3. Existing suggestions
+  // 3. Existing suggestions (filename + description field or title fallback)
   const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
-  const suggestionFiles = [];
+  const suggestions = [];
   if (existsSync(suggestionsDir)) {
     for (const f of readdirSync(suggestionsDir).filter(f => f.endsWith('.md'))) {
-      suggestionFiles.push(f);
+      const content = readFileSync(resolve(suggestionsDir, f), 'utf8');
+      const descMatch = content.match(/^## Description\n(.+)/m);
+      const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
+      suggestions.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
     }
   }
-  summary += `\n## Open Suggestions (${suggestionFiles.length} files)\n`;
-  for (const s of suggestionFiles) summary += `- ${s}\n`;
+  summary += `\n## Open Suggestions (${suggestions.length} files)\n`;
+  for (const s of suggestions) summary += `- ${s.file}${s.description ? ': ' + s.description : ''}\n`;
 
-  // 4. Existing hooks
+  // 4. Existing hooks (filename + Description: comment or title fallback)
   const hooksDir = resolve(root, '.claude', 'hooks');
-  const hookFiles = [];
+  const hooks = [];
   if (existsSync(hooksDir)) {
     for (const f of readdirSync(hooksDir)) {
-      hookFiles.push(f);
+      const content = readFileSync(resolve(hooksDir, f), 'utf8');
+      const descMatch = content.match(/^#\s*Description:\s*(.+)/m);
+      const titleMatch = content.match(/^#\s+\w+ hook:\s*(.+)/m);
+      hooks.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
     }
   }
-  summary += `\n## Hooks (${hookFiles.length} files)\n`;
-  for (const h of hookFiles) summary += `- ${h}\n`;
+  summary += `\n## Hooks (${hooks.length} files)\n`;
+  for (const h of hooks) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
 
   return summary;
 }
@@ -549,6 +555,9 @@ Each suggestion MUST include (SUGG-03):
 \`\`\`markdown
 # Suggestion: {descriptive title}
 
+## Description
+{one-line summary of what this suggestion proposes — used for deduplication and context display}
+
 ## Status
 pending
 
@@ -610,6 +619,15 @@ You analyze session data to detect patterns that should become automated hooks.
 - Use the session data to judge whether a pattern is a genuine habit vs one-off noise
 - Consider: frequency, consistency across sessions, user intent signals
 - Dangerous commands (rm -rf, force push) and secret writes (.env, .pem) warrant immediate action regardless of frequency
+
+## Hook script format
+Every hook script MUST start with this exact header pattern:
+\`\`\`bash
+#!/bin/bash
+# {EventType} hook: {hook-name}
+# Description: {one-line summary of what this hook does — used for deduplication and context display}
+\`\`\`
+The \`# Description:\` line is mandatory. It is parsed by the orchestrator for context summaries.
 
 ## Output rules
 - Write hook scripts to target project's .claude/hooks/ directory
@@ -706,6 +724,7 @@ Log "skipped — already exists: {name}" when you skip.
 
 ${buildHygienePrompt(projectRoot)}`,
             tools: ['Read', 'Write', 'Glob'],
+            skills: ['context-hygiene'],
             maxTurns: 15,
           },
         },
