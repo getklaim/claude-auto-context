@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Auto Context plugin marketplace",
-    "version": "1.4.0"
+    "version": "1.4.1"
   },
   "plugins": [
     {
       "name": "claude-auto-context",
       "source": "./",
       "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "author": {
         "name": "getklaim"
       },
