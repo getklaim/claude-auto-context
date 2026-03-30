@@ -72,7 +72,7 @@ Full archive: milestones/v1.3-ROADMAP.md
 | 10. Delivery + UX | v1.3 | SINT-01..05, SDEL-01..04 | Complete | 2026-03-26 |
 | 11. Infrastructure Fixes | v1.4 | INFRA-01..03 | Complete | 2026-03-27 |
 | 0. Pre-completed Cleanup | v2.0 | CLEN-01, CLEN-02 | Complete | 2026-03-30 |
-| 15. Unified Architecture | 2/2 | Complete   | 2026-03-30 | -- |
+| 15. Unified Architecture | 2/2 | Complete    | 2026-03-30 | -- |
 
 ---
 *Last updated: 2026-03-30 — merged phases 15-18 into single phase*

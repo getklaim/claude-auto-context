@@ -7,9 +7,9 @@
 
 ### 워커 인프라
 
-- [ ] **WORK-01**: pending raw_events가 100개 이상일 때만 배치 처리
-- [ ] **WORK-02**: observations 테이블과 pending-observations.json 로직 제거
-- [ ] **WORK-03**: batchCount 변수 제거
+- [x] **WORK-01**: pending raw_events가 100개 이상일 때만 배치 처리
+- [x] **WORK-02**: observations 테이블과 pending-observations.json 로직 제거
+- [x] **WORK-03**: batchCount 변수 제거
 
 ### 오케스트레이터
 
@@ -39,8 +39,8 @@
 
 - [x] **CLEN-01**: skill-detector.mjs, skill-cap.mjs 삭제
 - [x] **CLEN-02**: skills-registry.json 참조 제거
-- [ ] **CLEN-03**: observations 테이블 생성 및 collectObservations() 제거
-- [ ] **CLEN-04**: buildObservationsContext() 및 pending-observations.json 처리 제거
+- [x] **CLEN-03**: observations 테이블 생성 및 collectObservations() 제거
+- [x] **CLEN-04**: buildObservationsContext() 및 pending-observations.json 처리 제거
 
 ## Future Requirements
 
@@ -68,9 +68,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| WORK-01 | Phase 15: Cleanup and Infrastructure | Pending |
-| WORK-02 | Phase 15: Cleanup and Infrastructure | Pending |
-| WORK-03 | Phase 15: Cleanup and Infrastructure | Pending |
+| WORK-01 | Phase 15: Cleanup and Infrastructure | Complete |
+| WORK-02 | Phase 15: Cleanup and Infrastructure | Complete |
+| WORK-03 | Phase 15: Cleanup and Infrastructure | Complete |
 | ORCH-01 | Phase 16: Orchestrator Unification | Complete |
 | ORCH-02 | Phase 16: Orchestrator Unification | Complete |
 | ORCH-03 | Phase 16: Orchestrator Unification | Complete |
@@ -85,8 +85,8 @@
 | HYGI-02 | Phase 16: Orchestrator Unification | Complete |
 | CLEN-01 | Phase 0: Pre-completed Cleanup | Complete |
 | CLEN-02 | Phase 0: Pre-completed Cleanup | Complete |
-| CLEN-03 | Phase 15: Cleanup and Infrastructure | Pending |
-| CLEN-04 | Phase 15: Cleanup and Infrastructure | Pending |
+| CLEN-03 | Phase 15: Cleanup and Infrastructure | Complete |
+| CLEN-04 | Phase 15: Cleanup and Infrastructure | Complete |
 
 **Coverage:**
 - v2.0 requirements: 18 total
