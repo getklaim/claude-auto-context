@@ -9,6 +9,7 @@ import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync, readd
 import { resolve, relative } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
+import { loadExistingSkills } from './skill-prompt-builder.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -276,6 +277,59 @@ function buildRulesTopicIndex(root) {
   }
 
   return out;
+}
+
+// --- Existing Context Summary (ORCH-02) ---
+
+function buildExistingContextSummary(root) {
+  let summary = `\n# Existing Project Context — Check before creating anything new\n`;
+  summary += `Before creating any new artifact, check this list. If a similar one exists, SKIP or UPDATE it instead of duplicating.\n`;
+
+  // 1. Existing rules
+  const rulesDir = resolve(root, '.claude', 'rules');
+  const localRulesDir = resolve(root, '.claude', 'rules', 'local');
+  const ruleFiles = [];
+  if (existsSync(rulesDir)) {
+    for (const f of readdirSync(rulesDir).filter(f => f.endsWith('.md'))) {
+      ruleFiles.push(`committed/${f}`);
+    }
+  }
+  if (existsSync(localRulesDir)) {
+    for (const f of readdirSync(localRulesDir).filter(f => f.endsWith('.md'))) {
+      ruleFiles.push(`local/${f}`);
+    }
+  }
+  summary += `\n## Rules (${ruleFiles.length} files)\n`;
+  for (const r of ruleFiles) summary += `- ${r}\n`;
+
+  // 2. Existing skills
+  const skills = loadExistingSkills(root);
+  summary += `\n## Skills (${skills.length} dirs)\n`;
+  for (const s of skills) summary += `- ${s.file}: ${s.description || s.name}\n`;
+
+  // 3. Existing suggestions
+  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
+  const suggestionFiles = [];
+  if (existsSync(suggestionsDir)) {
+    for (const f of readdirSync(suggestionsDir).filter(f => f.endsWith('.md'))) {
+      suggestionFiles.push(f);
+    }
+  }
+  summary += `\n## Open Suggestions (${suggestionFiles.length} files)\n`;
+  for (const s of suggestionFiles) summary += `- ${s}\n`;
+
+  // 4. Existing hooks
+  const hooksDir = resolve(root, '.claude', 'hooks');
+  const hookFiles = [];
+  if (existsSync(hooksDir)) {
+    for (const f of readdirSync(hooksDir)) {
+      hookFiles.push(f);
+    }
+  }
+  summary += `\n## Hooks (${hookFiles.length} files)\n`;
+  for (const h of hookFiles) summary += `- ${h}\n`;
+
+  return summary;
 }
 
 // --- Hygiene Prompt Builder ---
