@@ -24,10 +24,11 @@ Analyze session observation data to find conventions and implicit knowledge, the
 
 ## Output Format
 
-Each rules file uses YAML frontmatter with path scoping:
+Each rules file uses YAML frontmatter with `description:` (required) and optional path scoping:
 
 ```markdown
 ---
+description: "One-line summary of what topic this rule covers"
 globs:
   - "src/auth/**"
 ---
@@ -36,14 +37,16 @@ globs:
 Evidence: observed in sessions [session_id_1, session_id_2].
 ```
 
+The `description:` field is mandatory. It must be a single line summarizing the rule's topic. This description is used for topic-level deduplication across cycles.
+
 ## Procedure
 
-1. Read existing rules in `.claude/rules/local/` AND `.claude/rules/` to avoid duplication with both auto-generated and committed team rules
+1. Review the "Existing Rules" topic index injected in your prompt — each line is `filename: one-line description`. If your candidate covers the same topic as an existing rule, do NOT create a new file. Update the existing file only if the new evidence adds value.
 2. Analyze session data for repeated patterns
 3. For each candidate:
-   a. Verify NOT discoverable from code (use Glob/Read to check)
-   b. Verify no duplication with existing rules (local or committed)
-4. Write new rules files to `.claude/rules/local/`
+   a. Check topic index for overlap — same topic = same rule, even if worded differently
+   b. Verify NOT discoverable from code (use Glob/Read to check)
+4. Write new rules files to `.claude/rules/local/` with required `description:` in frontmatter
 5. Use narrow glob scoping (prefer `src/auth/**` over `**`)
 6. For project-wide knowledge (not file-scoped), omit `globs:` from frontmatter — the rule will apply globally
 
