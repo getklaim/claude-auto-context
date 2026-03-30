@@ -35,23 +35,6 @@ function log(msg) {
   try { appendFileSync(logPath, line); } catch {}
 }
 
-// --- Context Threshold Check (for hygiene-agent trigger) ---
-
-function shouldRunHygiene(root) {
-  const rulesDir = resolve(root, '.claude', 'rules');
-  const localRulesDir = resolve(root, '.claude', 'rules', 'local');
-
-  let rulesCount = 0;
-  if (existsSync(rulesDir)) {
-    rulesCount += readdirSync(rulesDir).filter(f => f.endsWith('.md')).length;
-  }
-  if (existsSync(localRulesDir)) {
-    rulesCount += readdirSync(localRulesDir).filter(f => f.endsWith('.md')).length;
-  }
-
-  return rulesCount > 0;
-}
-
 // --- Queue Operations ---
 
 function selfHeal(db, forceAll = false) {
@@ -638,6 +621,90 @@ You analyze session data to detect patterns that should become automated hooks.
             tools: ['Read', 'Write', 'Edit', 'Glob'],
             maxTurns: 20,
           },
+          "skill-agent": {
+            description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to both .claude/skills/ and skills/ (dual-dir sync).",
+            prompt: `${existingContextSummary}
+
+## Conservative Behavior (ORCH-03)
+Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+You are a skill extraction agent. Analyze the raw session events provided by the orchestrator to detect repeated multi-step workflows that deserve to become reusable skills.
+
+## What to detect (SKIL-02)
+
+Look for REPEATED multi-step tool sequences across sessions:
+- Same tool chain appearing 2+ times (e.g., Read→Grep→Edit→Read→Bash pattern)
+- Complex workflows with 4+ steps that follow a consistent pattern
+- Domain-specific procedures (test→fix→test, deploy→verify, migration→validate)
+
+## Necessity Gate
+
+Before creating ANY skill, ALL three criteria must be true:
+1. **Externalized Knowledge** — Requires domain knowledge or multi-step coordination Claude cannot reliably do from first principles.
+2. **Repeatable Pattern** — Executed multiple times with same structure, different inputs.
+3. **Context Budget Justification** — Skill instructions provide value exceeding their token cost.
+
+### REJECT These (native Claude capability)
+- Read + find + fix (high Read/Grep ratio + 1-2 Edit)
+- Single-file edits, naming/style fixes
+- Debugging spirals, one-shot tasks, generic exploration
+
+If a candidate fails: log "SKIP: {pattern} — {reason}" and create nothing.
+
+## Output: SKILL.md Format (SKIL-03)
+
+Create SKILL.md in BOTH locations (dual-dir sync):
+- \`.claude/skills/{skill-name}/SKILL.md\`
+- \`skills/{skill-name}/SKILL.md\`
+
+Both copies MUST be identical.
+
+Use this exact format:
+\`\`\`markdown
+---
+name: {skill-name}
+description: {one-line description}. USE WHEN {trigger phrase}.
+---
+
+# {Skill Title}
+
+{What this skill does — 1-2 sentences.}
+
+## Qualification Criteria
+
+{When to use this skill — specific conditions}
+
+## Procedure
+
+1. {Step 1}
+2. {Step 2}
+...
+
+## Anti-Patterns
+
+- Do NOT {common misuse}
+\`\`\`
+
+## Deduplication (SKIL-04)
+
+Check the "Skills" section in the context summary above. Do NOT create a skill that overlaps with any existing skill by name or workflow purpose.
+
+## Rules
+- Maximum 1 skill per batch. Pick the strongest candidate.
+- If no candidate passes the Necessity Gate, create nothing. Most sessions will NOT yield a skill.
+- Both SKILL.md copies must be identical (dual-dir sync).
+- Use concrete tool names and file patterns from the session data, not generic placeholders.`,
+            tools: ['Read', 'Write', 'Glob'],
+            maxTurns: 20,
+          },
+          "hygiene-agent": {
+            description: "Context quality auditor. Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.",
+            prompt: buildHygienePrompt(projectRoot),
+            tools: ['Read', 'Write', 'Glob'],
+            maxTurns: 15,
+          },
         },
       }
     });
@@ -676,54 +743,6 @@ You analyze session data to detect patterns that should become automated hooks.
     log(`quality-gate: failed (non-fatal): ${err.message}`);
   }
 
-  // ③ Check if context still changed after gate (reverts may have undone changes)
-  const snapshotAfter = takeContentSnapshot(projectRoot);
-
-  if (!hasContentChanged(snapshotBefore, snapshotAfter)) {
-    log('hygiene: no context changes remain after quality gate, skipping');
-    return;
-  }
-
-  if (!shouldRunHygiene(projectRoot)) {
-    log('hygiene: no rules files found, skipping');
-    return;
-  }
-
-  log('hygiene: context changes detected, running hygiene-agent');
-
-  const hygieneAc = new AbortController();
-  const hygieneTimer = setTimeout(() => hygieneAc.abort(), AGENT_TIMEOUT_MS);
-
-  try {
-    const hygienePrompt = buildHygienePrompt(projectRoot);
-    const hygieneResult = query({
-      prompt: hygienePrompt,
-      options: {
-        model: 'sonnet',
-        cwd: projectRoot,
-        allowedTools: ['Read', 'Write', 'Glob'],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        abortController: hygieneAc,
-        maxTurns: 15,
-        maxBudgetUsd: 0.50,
-        persistSession: false,
-        settingSources: ['project'],
-        stderr: (data) => log(`[hygiene-stderr] ${data}`),
-      }
-    });
-
-    for await (const message of hygieneResult) {
-      if (message.type === 'result') {
-        const denials = message.permission_denials?.length ?? 0;
-        log(`hygiene session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
-      }
-    }
-  } catch (err) {
-    log(`hygiene: failed (non-fatal): ${err.message}`);
-  } finally {
-    clearTimeout(hygieneTimer);
-  }
 }
 
 // --- Lifecycle ---
