@@ -18,9 +18,8 @@ node_modules/
 .claude-auto-context/skill-prompts/
 decisions.jsonl
 
-# Local hooks & rules (auto-extracted, not distributed)
-.claude/hooks/
-.claude/rules/local/
+# .claude/ is the user's project-local config — not part of the plugin
+.claude/
 
 # Utility scripts (local only)
 scripts/split-analyses.py

@@ -21,9 +21,9 @@
 - Claude Code docs: `https://code.claude.com/docs/en/` (NOT `docs.anthropic.com`)
 
 ## Skills Distribution
-- `plugin.json` does NOT register skills — skills in `.claude/skills/` must be manually copied to the target project's `.claude/skills/` directory
-- There is no install script that auto-copies skills; a user installing the plugin elsewhere will NOT get skills automatically
+- Plugin skills live in `skills/` (plugin root) — auto-discovered when plugin is enabled
+- `.claude/skills/` is the user's project-local directory, not used by this plugin
 
 ## Subprocess Spawning
-- `CLAUDECODE` env var must be unset before spawning `claude -p` or Agent SDK — see `.claude/rules/worker-subprocess.md`
+- `CLAUDECODE` env var must be unset before spawning `claude -p` or Agent SDK (double-fix: shell launcher + process.env delete)
 - `claude -p` hangs indefinitely inside Claude Code sessions — must run from standalone terminal
