@@ -701,7 +701,14 @@ Check the "Skills" section in the context summary above. Do NOT create a skill t
           },
           "hygiene-agent": {
             description: "Context quality auditor. Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.",
-            prompt: buildHygienePrompt(projectRoot),
+            prompt: `${existingContextSummary}
+
+## Conservative Behavior (ORCH-03)
+Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+${buildHygienePrompt(projectRoot)}`,
             tools: ['Read', 'Write', 'Glob'],
             maxTurns: 15,
           },
