@@ -1,6 +1,6 @@
 {
   "name": "claude-auto-context",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
   "author": {
     "name": "getklaim"
