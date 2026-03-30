@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      ".claude/rules/local/**"
+      "Read(.claude/**)",
+      "Write(.claude/rules/local/**)",
+      "Edit(.claude/rules/local/**)",
+      "Write(.claude/skills/**)",
+      "Edit(.claude/skills/**)",
+      "Write(.claude/hooks/**)",
+      "Edit(.claude/hooks/**)",
+      "Edit(.claude/settings.json)",
+      "Write(.claude-auto-context/suggestions/**)",
+      "Write(.claude-auto-context/skill-prompts/**)"
     ]
   }
 }
