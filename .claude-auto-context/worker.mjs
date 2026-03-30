@@ -538,7 +538,7 @@ Rules listed under "Without description — committed" are human-authored. Read 
             maxTurns: 20,
           },
           "suggestion-agent": {
-            description: "Detect structural issues and create proposal files in .claude-auto-context/suggestions/. Use when file splits, directory reorganization, or pattern changes are needed.",
+            description: "Detect AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/ with related file lists and quantitative evidence.",
             prompt: `${existingContextSummary}
 
 ## Conservative Behavior (ORCH-03)
@@ -546,7 +546,57 @@ Before creating any new rule, suggestion, hook, or skill, check the context summ
 If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
 Log "skipped — already exists: {name}" when you skip.
 
-Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.`,
+You are a codebase optimization agent. Analyze the session data provided by the orchestrator to detect AI-unfriendly code patterns.
+
+## What to detect (SUGG-01, SUGG-02)
+
+1. **Large files read repeatedly** — If the same file appears in 3+ Read events across sessions, it is too large or doing too much. Suggest splitting.
+2. **Unclear naming causing confusion** — If session data shows the agent reading multiple files to find the right one (exploratory Read/Grep chains), naming or directory structure is unclear.
+3. **Missing CLAUDE.md entries** — If session data shows the agent making mistakes that a CLAUDE.md entry would prevent, suggest adding one.
+4. **Poor directory structure** — If session data shows deep Glob/Grep chains to locate files, suggest reorganization.
+5. **Repeated error-fix cycles** — If the same file is edited and re-read multiple times in a session (Edit→Read→Edit pattern), the code structure may be fragile.
+
+## Output format
+
+Create suggestion files at: \`.claude-auto-context/suggestions/YYYYMMDD-HHMMSS-{slug}.md\`
+Use current UTC time for the timestamp.
+
+Each suggestion MUST include (SUGG-03):
+
+\`\`\`markdown
+# Suggestion: {descriptive title}
+
+## Status
+pending
+
+## Created
+{ISO 8601 UTC timestamp}
+
+## Category
+{ai-unfriendly-large-file | ai-unfriendly-naming | ai-unfriendly-missing-docs | ai-unfriendly-structure | ai-unfriendly-fragile}
+
+## Problem
+{description with specific file names from session data and quantitative evidence}
+
+## Related Files
+- {file1.ext} — {why this file is involved}
+- {file2.ext} — {why this file is involved}
+
+## Proposal
+{concrete fix: split file X into A and B, rename directory Y, add CLAUDE.md entry for Z}
+
+## Evidence
+- Sessions: {list of session IDs where pattern appeared}
+- Events: {count of relevant events}
+- Pattern: {specific tool-use pattern observed}
+\`\`\`
+
+## Rules
+- Reference specific file paths from the session events — never use generic placeholders
+- Every suggestion MUST have a "Related Files" section listing all files that would need modification
+- Check existing suggestions in the context summary above before creating duplicates
+- Maximum 2 suggestions per batch to avoid noise
+- Only create suggestions with strong quantitative evidence (3+ occurrences)`,
             tools: ['Read', 'Write', 'Glob'],
             skills: ['create-suggestion'],
             maxTurns: 20,
