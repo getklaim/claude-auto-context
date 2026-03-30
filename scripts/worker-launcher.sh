@@ -4,26 +4,33 @@
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PROJECT_DIR="${1:-$PLUGIN_ROOT}"
-LOCK_FILE="$PROJECT_DIR/.claude-auto-context/worker.lock"
+LOCK_DIR="$PROJECT_DIR/.claude-auto-context/worker.lock.d"
+LOCK_PID_FILE="$LOCK_DIR/pid"
 LOG_DIR="$PROJECT_DIR/.claude-auto-context/db"
 LOG_FILE="$LOG_DIR/worker.log"
 
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
-# Check lock file
-# NOTE: SIGKILL cannot be caught by the worker, so this stale-lock check is
-# essential for recovering from hard kills, OOM kills, or machine reboots.
-if [ -f "$LOCK_FILE" ]; then
-  PID=$(cat "$LOCK_FILE" 2>/dev/null)
+# Atomic lock acquisition via mkdir (POSIX-atomic, prevents TOCTOU race)
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  # Lock exists — check if the owning process is still alive
+  PID=$(cat "$LOCK_PID_FILE" 2>/dev/null)
   if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     # Worker already running
     exit 0
   fi
   # Stale lock — remove it and log for post-mortem analysis
   echo "[$(date -u +%FT%TZ)] stale lock removed (pid=$PID)" >> "$LOG_FILE"
-  rm -f "$LOCK_FILE"
+  rm -rf "$LOCK_DIR"
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    # Another launcher won the race — exit gracefully
+    exit 0
+  fi
 fi
+
+# Write launcher PID immediately to close the gap before worker starts
+echo $$ > "$LOCK_PID_FILE"
 
 # Launch worker in background
 # Unset CLAUDECODE to allow Agent SDK to spawn Claude Code subprocess

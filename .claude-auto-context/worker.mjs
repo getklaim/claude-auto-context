@@ -5,7 +5,7 @@
 // Uses bun:sqlite — zero native dependencies.
 
 import { Database } from 'bun:sqlite';
-import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, writeFileSync, unlinkSync, rmdirSync, appendFileSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { resolve, relative } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
@@ -17,7 +17,8 @@ delete process.env.CLAUDECODE;
 const projectRoot = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const dbDir = resolve(projectRoot, '.claude-auto-context', 'db');
 const dbPath = resolve(dbDir, 'claude-auto-context.db');
-const lockPath = resolve(projectRoot, '.claude-auto-context', 'worker.lock');
+const lockDir = resolve(projectRoot, '.claude-auto-context', 'worker.lock.d');
+const lockPidPath = resolve(lockDir, 'pid');
 const logPath = resolve(dbDir, 'worker.log');
 
 const STALE_THRESHOLD_S = 650;        // 650s → self-heal (just above AGENT_TIMEOUT_MS/1000)
@@ -44,7 +45,7 @@ function selfHeal(db, forceAll = false) {
   const healed = forceAll
     ? db.run(`
         UPDATE raw_events
-        SET status = 'pending', claimed_at = NULL, retry_count = retry_count + 1
+        SET status = 'pending', claimed_at = NULL
         WHERE status = 'processing'
       `)
     : db.run(`
@@ -65,17 +66,21 @@ function selfHeal(db, forceAll = false) {
   if (dead.changes > 0) log(`self-heal: ${dead.changes} events moved to dead`);
 }
 
+const BATCH_LIMIT = 500;
+
 function claimBatch(db) {
   return db.transaction(() => {
     selfHeal(db);
-    const result = db.run(`
-      UPDATE raw_events SET status='processing', claimed_at=datetime('now')
-      WHERE status='pending'
-    `);
-    if (result.changes === 0) return [];
+    // Claim a bounded batch to prevent buildBulkPrompt truncation data loss
+    const ids = db.prepare(
+      `SELECT id FROM raw_events WHERE status='pending' ORDER BY id ASC LIMIT ?`
+    ).all(BATCH_LIMIT).map(r => r.id);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    db.run(`UPDATE raw_events SET status='processing', claimed_at=datetime('now') WHERE id IN (${placeholders})`, ...ids);
     return db.prepare(
-      `SELECT * FROM raw_events WHERE status='processing' ORDER BY id ASC`
-    ).all();
+      `SELECT * FROM raw_events WHERE status='processing' AND id IN (${placeholders}) ORDER BY id ASC`
+    ).all(...ids);
   })();
 }
 
@@ -132,6 +137,7 @@ const SKIP_TOOL_EVENTS = new Set(['Stop']);
 function buildBulkPrompt(events) {
   const MAX_TOTAL = 100_000;
   const MAX_PAYLOAD = 2_000;
+  const includedIds = new Set();
   const bySession = new Map();
   for (const e of events) {
     if (!bySession.has(e.session_id)) bySession.set(e.session_id, []);
@@ -139,9 +145,13 @@ function buildBulkPrompt(events) {
   }
   let out = `# Observed Data: ${events.length} events, ${bySession.size} sessions\n`;
   let total = out.length;
+  let truncated = false;
 
   for (const [sid, evts] of bySession) {
-    out += `\n## Session: ${sid}\n`;
+    if (truncated) break;
+    const header = `\n## Session: ${sid}\n`;
+    total += header.length;
+    out += header;
 
     // Separate events by type: UserPromptSubmit first, then the rest
     const userPrompts = evts.filter(e => e.hook_type === 'UserPromptSubmit');
@@ -152,26 +162,35 @@ function buildBulkPrompt(events) {
 
     // User Prompts section — placed first so LLM reads user intent before tool outputs
     if (userPrompts.length > 0) {
-      out += `### User Prompts\n`;
+      const secHeader = `### User Prompts\n`;
+      total += secHeader.length;
+      out += secHeader;
       for (const e of userPrompts) {
         let p = e.payload.length > MAX_PAYLOAD
           ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
         const line = `- [UserPromptSubmit] ${p}\n`;
         if (total + line.length > MAX_TOTAL) {
           out += '\n[...truncated due to size limit]\n';
-          return out;
+          truncated = true;
+          break;
         }
         out += line;
         total += line.length;
+        includedIds.add(e.id);
       }
     }
 
     // Tool Activity section
-    if (toolActivity.length > 0) {
-      out += `### Tool Activity\n`;
+    if (!truncated && toolActivity.length > 0) {
+      const secHeader = `### Tool Activity\n`;
+      total += secHeader.length;
+      out += secHeader;
       for (const e of toolActivity) {
         const compressed = compressPayload(e.tool_name, e.payload);
-        if (compressed === null) continue; // skip this event
+        if (compressed === null) {
+          includedIds.add(e.id); // skipped by design (low-value), still counts as processed
+          continue;
+        }
 
         let p;
         if (compressed !== undefined) {
@@ -185,14 +204,16 @@ function buildBulkPrompt(events) {
         const line = `- [${e.hook_type}${e.tool_name ? ':' + e.tool_name : ''}] ${p}\n`;
         if (total + line.length > MAX_TOTAL) {
           out += '\n[...truncated due to size limit]\n';
-          return out;
+          truncated = true;
+          break;
         }
         out += line;
         total += line.length;
+        includedIds.add(e.id);
       }
     }
   }
-  return out;
+  return { prompt: out, includedIds };
 }
 
 // --- Rules Topic Index Builder ---
@@ -464,7 +485,7 @@ pending
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
-  const bulkPrompt = buildBulkPrompt(events);
+  const { prompt: bulkPrompt, includedIds } = buildBulkPrompt(events);
   const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
   const existingContextSummary = buildExistingContextSummary(projectRoot);
 
@@ -745,6 +766,8 @@ ${buildHygienePrompt(projectRoot)}`,
   }
 
   // ② Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
+  // Runs independently from batch confirmation so a gate failure does not
+  // trigger an expensive re-processing of the entire LLM batch.
   try {
     const gate = runQualityGate(snapshotBefore, projectRoot);
     if (gate.evaluated > 0) {
@@ -765,12 +788,14 @@ ${buildHygienePrompt(projectRoot)}`,
     log(`quality-gate: failed (non-fatal): ${err.message}`);
   }
 
+  return includedIds;
 }
 
 // --- Lifecycle ---
 
 function cleanup() {
-  try { unlinkSync(lockPath); } catch {}
+  try { unlinkSync(lockPidPath); } catch {}
+  try { rmdirSync(lockDir); } catch {}
   log('worker stopped, lock removed');
 }
 
@@ -782,7 +807,8 @@ async function main() {
     process.exit(1);
   }
 
-  writeFileSync(lockPath, String(process.pid));
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(lockPidPath, String(process.pid));
   log(`worker started (pid=${process.pid})`);
 
   process.on('SIGTERM', () => { cleanup(); process.exit(0); });
@@ -849,9 +875,21 @@ async function main() {
     if (batch.length > 0) {
       log(`claimed ${batch.length} events`);
       try {
-        await processBatch(batch, db);
-        confirmBatch(db, batch.map(e => e.id));
-        log(`confirmed ${batch.length} events`);
+        const includedIds = await processBatch(batch, db);
+        // Only confirm events that were actually included in the prompt.
+        // Events truncated by buildBulkPrompt are released back to pending
+        // without incrementing retry_count so they get processed next cycle.
+        const allIds = batch.map(e => e.id);
+        const includedArr = allIds.filter(id => includedIds.has(id));
+        const excludedArr = allIds.filter(id => !includedIds.has(id));
+        confirmBatch(db, includedArr);
+        if (excludedArr.length > 0) {
+          // Release truncated events back to pending without penalty
+          const stmt = db.prepare(`UPDATE raw_events SET status='pending', claimed_at=NULL WHERE id=?`);
+          db.transaction(() => { for (const id of excludedArr) stmt.run(id); })();
+          log(`released ${excludedArr.length} truncated events back to pending`);
+        }
+        log(`confirmed ${includedArr.length} events`);
       } catch (err) {
         log(`processBatch failed: ${err.message}`);
         rejectBatch(db, batch.map(e => e.id));

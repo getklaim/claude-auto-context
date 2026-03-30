@@ -13,7 +13,7 @@ echo "$INPUT" | bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" Stop
 # Launch worker only when enough events have accumulated
 DB_PATH="$PROJECT_DIR/.claude-auto-context/db/claude-auto-context.db"
 if [ -f "$DB_PATH" ]; then
-  COUNT=$(sqlite3 "$DB_PATH" "SELECT count(*) FROM raw_events WHERE status='pending'" 2>/dev/null || echo "0")
+  COUNT=$(bun -e "import{Database}from'bun:sqlite';try{const d=new Database('$DB_PATH',{readonly:true});console.log(d.prepare('SELECT count(*)as c FROM raw_events WHERE status=?').get('pending').c);d.close()}catch{console.log(0)}" 2>/dev/null || echo "0")
   if [ "$COUNT" -ge "$BATCH_THRESHOLD" ]; then
     "$PLUGIN_ROOT/scripts/worker-launcher.sh" "$PROJECT_DIR" &
   fi
