@@ -166,13 +166,38 @@ export function buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db
   const topCandidates = candidates.slice(0, 3);
 
   let prompt = `# Skill Prompt Composition Request\n\n`;
-  prompt += `You are a skill-prompt composer. Analyze the detected workflow patterns below and produce a skill-creator prompt file for each candidate. The prompt file will later be used by skill-creator to generate an actual SKILL.md file.\n\n`;
+  prompt += `You are a skill-prompt composer. Analyze the detected workflow patterns below and decide whether each candidate DESERVES to become a skill. Then produce a skill-creator prompt file ONLY for candidates that pass the Necessity Gate.\n\n`;
+
+  // --- Necessity Gate (First Principles, inline) ---
+  prompt += `## Necessity Gate\n\n`;
+  prompt += `Before generating ANY skill prompt, evaluate each candidate against these three criteria. ALL three must be true:\n\n`;
+  prompt += `1. **Externalized Knowledge** — The task requires domain knowledge, project-specific conventions, or multi-step coordination that Claude cannot reliably perform from first principles in a new conversation.\n`;
+  prompt += `2. **Repeatable Pattern** — The workflow has been (or will be) executed multiple times with the same structure but different inputs.\n`;
+  prompt += `3. **Context Budget Justification** — The skill's instructions provide value that exceeds the token cost of loading them.\n\n`;
+  prompt += `If a candidate fails, output: \`SKIP: {pattern_key} — {reason}\` and move on.\n\n`;
+  prompt += `### Valid Skill Archetypes\n\n`;
+  prompt += `| Type | What It Adds Beyond Claude's Baseline |\n`;
+  prompt += `|------|---------------------------------------|\n`;
+  prompt += `| Reference | Domain knowledge the LLM lacks or gets wrong |\n`;
+  prompt += `| Workflow | Multi-step process with specific ordering and gates |\n`;
+  prompt += `| Discipline | Behavioral constraints the LLM won't follow by default |\n`;
+  prompt += `| Meta | Knowledge about the skill system itself |\n`;
+  prompt += `| Infrastructure | Runtime behavior modification via hooks/scripts |\n\n`;
+  prompt += `### REJECT These Patterns (native Claude capability)\n\n`;
+  prompt += `- Read files + find pattern + apply fix (high Read/Grep ratio + 1-2 Edit = native behavior)\n`;
+  prompt += `- Single-file edit with no multi-step coordination\n`;
+  prompt += `- Naming/style fixes across files (Claude infers from code context)\n`;
+  prompt += `- Debugging spirals (repeated error-fix, not a reusable workflow)\n`;
+  prompt += `- One-shot tasks (migrations, one-time setup = scripts, not skills)\n`;
+  prompt += `- Generic exploration (reading docs, searching codebases = baseline LLM)\n\n`;
 
   prompt += `## Instructions\n\n`;
-  prompt += `For each candidate pattern, write a prompt file to:\n`;
-  prompt += `\`.claude-auto-context/skill-prompts/skill-YYYYMMDD-HHMMSS-{slug}.md\`\n\n`;
+  prompt += `For each candidate that PASSES the Necessity Gate:\n`;
+  prompt += `1. State which archetype it matches (Reference/Workflow/Discipline/Meta/Infrastructure)\n`;
+  prompt += `2. Write a prompt file to: \`.claude-auto-context/skill-prompts/skill-YYYYMMDD-HHMMSS-{slug}.md\`\n\n`;
   prompt += `Use current UTC time for the timestamp. The slug should be a kebab-case summary of the skill (e.g., "edit-test-commit").\n\n`;
   prompt += `Each prompt file must contain ALL four sections: What, When, Why, and When NOT to Use.\n\n`;
+  prompt += `If ALL candidates are rejected, write nothing. Not every pattern deserves to be a skill.\n\n`;
 
   for (let i = 0; i < topCandidates.length; i++) {
     const c = topCandidates[i];
@@ -228,6 +253,95 @@ export function buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db
     prompt += `---\n\n## Recent Session Data (for context)\n\n`;
     prompt += `\`\`\`\n${truncated}\n\`\`\`\n`;
   }
+
+  return prompt;
+}
+
+// --- Skill Creator Prompt (direct SKILL.md generation) ---
+
+function buildNecessityGate() {
+  return `## Necessity Gate
+
+Before creating ANY skill, ALL three criteria must be true:
+
+1. **Externalized Knowledge** — Requires domain knowledge or multi-step coordination Claude cannot reliably do from first principles.
+2. **Repeatable Pattern** — Executed multiple times with same structure, different inputs.
+3. **Context Budget Justification** — Skill instructions provide value exceeding their token cost.
+
+### REJECT These (native Claude capability)
+- Read + find + fix (high Read/Grep ratio + 1-2 Edit)
+- Single-file edits, naming/style fixes
+- Debugging spirals, one-shot tasks, generic exploration
+
+If a candidate fails: output \`SKIP: {pattern_key} — {reason}\` and move on.`;
+}
+
+export function buildSkillCreatorPrompt(candidates, existingSkills, db) {
+  const topCandidates = candidates.slice(0, 3);
+
+  let prompt = `# Skill Creator — Direct SKILL.md Generation\n\n`;
+  prompt += `You create actual SKILL.md files from detected workflow patterns.\n`;
+  prompt += `Only create skills that pass the Necessity Gate. Most candidates should be REJECTED.\n\n`;
+  prompt += buildNecessityGate() + '\n\n';
+
+  prompt += `## Output: SKILL.md Format\n\n`;
+  prompt += `For each candidate that PASSES, create SKILL.md in BOTH locations (dual-dir sync):\n`;
+  prompt += `- \`.claude/skills/{skill-name}/SKILL.md\`\n`;
+  prompt += `- \`skills/{skill-name}/SKILL.md\`\n\n`;
+  prompt += `Use this exact format:\n`;
+  prompt += `\`\`\`markdown\n`;
+  prompt += `---\n`;
+  prompt += `name: {skill-name}\n`;
+  prompt += `description: {one-line description}. USE WHEN {trigger phrase}.\n`;
+  prompt += `---\n\n`;
+  prompt += `# {Skill Title}\n\n`;
+  prompt += `{What this skill does — 1-2 sentences.}\n\n`;
+  prompt += `## Qualification Criteria\n\n`;
+  prompt += `{When to use this skill — specific conditions}\n\n`;
+  prompt += `## Procedure\n\n`;
+  prompt += `1. {Step 1}\n`;
+  prompt += `2. {Step 2}\n`;
+  prompt += `...\n\n`;
+  prompt += `## Anti-Patterns\n\n`;
+  prompt += `- Do NOT {common misuse}\n`;
+  prompt += `\`\`\`\n\n`;
+
+
+  // Candidates
+  for (let i = 0; i < topCandidates.length; i++) {
+    const c = topCandidates[i];
+    const ev = c.evidence;
+    const verbChain = ev.compound_verbs?.join(', ') || 'multi-step workflow';
+    const toolSeq = ev.tool_sequence?.join(' -> ') || 'unknown';
+
+    const examples = c.sessions.slice(0, 3).map(s => {
+      const gen = generalizeExample(s.promptFingerprint, s.toolSequence);
+      return `  - "${gen.generalizedPrompt}" → ${gen.toolFlow}`;
+    }).join('\n');
+
+    const negativeExamples = buildNegativeExamples(db, c.patternKey);
+
+    prompt += `---\n\n### Candidate ${i + 1}: ${c.patternKey}\n`;
+    prompt += `- Workflow: **${verbChain}**\n`;
+    prompt += `- Tools: ${sanitizeSecrets(toolSeq)}\n`;
+    prompt += `- Sessions: ${c.sessions.length} | Steps: ${ev.step_count} | Score: ${ev.score}\n`;
+    prompt += `- Examples:\n${examples}\n`;
+    prompt += `- Reject if:\n${negativeExamples}\n\n`;
+  }
+
+  // Existing skills
+  if (existingSkills.length > 0) {
+    prompt += `---\n\n## Existing Skills (do NOT duplicate)\n`;
+    for (const s of existingSkills) {
+      prompt += `- **${s.name}**: ${sanitizeSecrets(s.description)}\n`;
+    }
+    prompt += '\n';
+  }
+
+  prompt += `## Rules\n`;
+  prompt += `- Maximum 1 skill per batch. Pick the strongest candidate.\n`;
+  prompt += `- If ALL candidates fail the gate, create nothing.\n`;
+  prompt += `- Both SKILL.md copies must be identical (dual-dir sync).\n`;
 
   return prompt;
 }

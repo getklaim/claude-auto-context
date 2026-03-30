@@ -6,11 +6,10 @@
 
 import { Database } from 'bun:sqlite';
 import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync, readdirSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, relative } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
-import { runSkillDetector } from './skill-detector.mjs';
-import { buildSkillAgentPrompt, loadExistingSkills, getGenerateCandidates } from './skill-prompt-builder.mjs';
+import { buildSkillCreatorPrompt, loadExistingSkills, getGenerateCandidates } from './skill-prompt-builder.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -21,8 +20,6 @@ const dbPath = resolve(dbDir, 'claude-auto-context.db');
 const lockPath = resolve(projectRoot, '.claude-auto-context', 'worker.lock');
 const logPath = resolve(dbDir, 'worker.log');
 
-const POLL_INTERVAL_MS = 30_000;     // 30s between polls when idle
-const IDLE_TIMEOUT_MS = 5 * 60_000;  // 5min idle → exit
 const STALE_THRESHOLD_S = 200;       // 200s → self-heal (just above AGENT_TIMEOUT_MS/1000)
 const MAX_RETRIES = 3;
 const AGENT_TIMEOUT_MS = 3 * 60_000; // 3min per agent session
@@ -171,6 +168,41 @@ function collectObservations(db) {
 
 // --- Bulk Prompt Builder ---
 
+// Extract metadata-only summary for low-value tool events to reduce token cost.
+// Returns null to skip the event entirely.
+function compressPayload(toolName, payload) {
+  try {
+    const d = JSON.parse(payload);
+    const input = d.tool_input || {};
+    switch (toolName) {
+      case 'Read':
+        return input.file_path || '(unknown file)';
+      case 'Bash':
+        return input.command || '(unknown command)';
+      case 'Grep':
+        return `grep ${JSON.stringify(input.pattern || '')} ${input.path || '.'}`;
+      case 'Glob':
+        return `glob ${input.pattern || ''}`;
+      case 'WebFetch':
+        return input.url || '(unknown url)';
+      case 'Agent':
+      case 'Task':
+      case 'TaskCreate':
+      case 'TaskUpdate':
+      case 'TaskGet':
+      case 'AskUserQuestion':
+      case 'WebSearch':
+        return null; // skip entirely
+      default:
+        return undefined; // use original payload
+    }
+  } catch {
+    return undefined; // parse failed, use original payload
+  }
+}
+
+const SKIP_TOOL_EVENTS = new Set(['Stop']);
+
 function buildBulkPrompt(events) {
   const MAX_TOTAL = 100_000;
   const MAX_PAYLOAD = 2_000;
@@ -187,8 +219,10 @@ function buildBulkPrompt(events) {
 
     // Separate events by type: UserPromptSubmit first, then the rest
     const userPrompts = evts.filter(e => e.hook_type === 'UserPromptSubmit');
-    const toolActivity = evts.filter(e => e.hook_type !== 'UserPromptSubmit' && e.hook_type !== 'Stop');
-    const stopEvents = evts.filter(e => e.hook_type === 'Stop');
+    const toolActivity = evts.filter(e =>
+      e.hook_type !== 'UserPromptSubmit'
+      && !SKIP_TOOL_EVENTS.has(e.hook_type)
+    );
 
     // User Prompts section — placed first so LLM reads user intent before tool outputs
     if (userPrompts.length > 0) {
@@ -210,8 +244,18 @@ function buildBulkPrompt(events) {
     if (toolActivity.length > 0) {
       out += `### Tool Activity\n`;
       for (const e of toolActivity) {
-        let p = e.payload.length > MAX_PAYLOAD
-          ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
+        const compressed = compressPayload(e.tool_name, e.payload);
+        if (compressed === null) continue; // skip this event
+
+        let p;
+        if (compressed !== undefined) {
+          p = compressed; // use compressed metadata
+        } else {
+          // full payload for Write, Edit, and unknown tools
+          p = e.payload.length > MAX_PAYLOAD
+            ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
+        }
+
         const line = `- [${e.hook_type}${e.tool_name ? ':' + e.tool_name : ''}] ${p}\n`;
         if (total + line.length > MAX_TOTAL) {
           out += '\n[...truncated due to size limit]\n';
@@ -221,23 +265,74 @@ function buildBulkPrompt(events) {
         total += line.length;
       }
     }
+  }
+  return out;
+}
 
-    // Session End section
-    if (stopEvents.length > 0) {
-      out += `### Session End\n`;
-      for (const e of stopEvents) {
-        let p = e.payload.length > MAX_PAYLOAD
-          ? e.payload.slice(0, MAX_PAYLOAD) + '...[truncated]' : e.payload;
-        const line = `- [Stop] ${p}\n`;
-        if (total + line.length > MAX_TOTAL) {
-          out += '\n[...truncated due to size limit]\n';
-          return out;
-        }
-        out += line;
-        total += line.length;
+// --- Rules Topic Index Builder ---
+
+function buildRulesTopicIndex(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  if (!existsSync(rulesDir)) return '';
+
+  // Recursively collect all .md files under .claude/rules/
+  const allFiles = [];
+  function walkDir(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        walkDir(fullPath);
+      } else if (entry.name.endsWith('.md')) {
+        allFiles.push(fullPath);
       }
     }
   }
+  walkDir(rulesDir);
+
+  if (allFiles.length === 0) return '';
+
+  const withDesc = [];
+  const withoutDescLocal = [];
+  const withoutDescCommitted = [];
+
+  for (const filePath of allFiles.sort()) {
+    const content = readFileSync(filePath, 'utf8');
+    const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+    const relPath = relative(resolve(root, '.claude', 'rules'), filePath);
+    const isLocal = relPath.startsWith('local/') || relPath.startsWith('local\\');
+
+    if (descMatch) {
+      withDesc.push({ relPath, description: descMatch[1] });
+    } else if (isLocal) {
+      withoutDescLocal.push({ relPath });
+    } else {
+      withoutDescCommitted.push({ relPath });
+    }
+  }
+
+  let out = `\n# Existing Rules (${allFiles.length} files) — DO NOT create a rule if the same topic already exists\n`;
+
+  if (withDesc.length > 0) {
+    out += `\n## With description:\n`;
+    for (const f of withDesc) {
+      out += `- ${f.relPath}: ${f.description}\n`;
+    }
+  }
+
+  if (withoutDescLocal.length > 0) {
+    out += `\n## Without description — local (Read and add description: to frontmatter):\n`;
+    for (const f of withoutDescLocal) {
+      out += `- ${f.relPath}\n`;
+    }
+  }
+
+  if (withoutDescCommitted.length > 0) {
+    out += `\n## Without description — committed (Read to understand content, do NOT modify):\n`;
+    for (const f of withoutDescCommitted) {
+      out += `- ${f.relPath}\n`;
+    }
+  }
+
   return out;
 }
 
@@ -387,6 +482,27 @@ async function processBatch(events, db) {
   batchCount++;
   const bulkPrompt = buildBulkPrompt(events);
   const observationsContext = buildObservationsContext(db);
+  const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
+
+  // Build skill-agent context (every 100th batch)
+  const isSkillBatch = batchCount % 100 === 0;
+  let skillCreatorPrompt = null;
+  if (isSkillBatch) {
+    const skillCandidates = getGenerateCandidates(db);
+    if (skillCandidates.length > 0) {
+      const existingSkills = loadExistingSkills(projectRoot);
+      skillCreatorPrompt = buildSkillCreatorPrompt(skillCandidates, existingSkills, db);
+      log(`skill-agent: ${skillCandidates.length} candidates, ${existingSkills.length} existing skills (batch #${batchCount})`);
+    } else {
+      log(`skill-agent: no candidates, skipping (batch #${batchCount})`);
+    }
+  }
+
+  const agentCount = skillCreatorPrompt ? 4 : 3;
+  const skillOrchestratorLine = skillCreatorPrompt
+    ? `\n4. skill-agent — Create SKILL.md files from detected workflow patterns
+   Produces actual skill files in .claude/skills/ and skills/ (dual-dir sync).`
+    : '';
 
   // ① Snapshot context files (full content) before orchestrator
   const snapshotBefore = takeContentSnapshot(projectRoot);
@@ -398,7 +514,7 @@ async function processBatch(events, db) {
     const result = query({
       prompt: `${bulkPrompt}
 ${observationsContext}
-You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
+You are an orchestrator. Analyze the above session data and delegate to ALL ${agentCount === 4 ? 'FOUR' : 'THREE'} agents below.
 You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
 
 1. rules-agent — Repeated conventions
@@ -409,9 +525,9 @@ You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work
    Focus on "Tool Activity" sections for file patterns and structural signals (e.g. same large file read repeatedly).
 3. hooks-agent — Detect repetitive manual actions and generate hook configurations
    **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
-   Has access to cross-cycle observations from previous batches.
+   Has access to cross-cycle observations from previous batches.${skillOrchestratorLine}
 
-Call all three agents now.`,
+Call all ${agentCount === 4 ? 'four' : 'three'} agents now.`,
       options: {
         model: 'sonnet',
         cwd: projectRoot,
@@ -420,7 +536,7 @@ Call all three agents now.`,
         allowDangerouslySkipPermissions: true,
         abortController: ac,
         maxTurns: 20,
-        maxBudgetUsd: 1.00,
+        maxBudgetUsd: skillCreatorPrompt ? 1.50 : 1.00,
         persistSession: false,
         settingSources: ['project'],
         stderr: (data) => log(`[stderr] ${data}`),
@@ -428,6 +544,13 @@ Call all three agents now.`,
           "rules-agent": {
             description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Analyzes session patterns and cross-cycle observations to judge which conventions warrant rules.",
             prompt: `Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.
+${rulesTopicIndex}
+
+## Description maintenance
+Rules listed under "Without description — local" are missing a description: field in their YAML frontmatter.
+Before creating new rules, Read each of these files, then add a one-line description: to their frontmatter.
+Rules listed under "Without description — committed" are human-authored. Read them to understand their content and avoid duplicates, but do NOT modify them.
+
 ${observationsContext}
 After analysis, write any new candidate patterns (not yet strong enough for a rule) to .claude-auto-context/pending-observations.json as a JSON array:
 [{"pattern_key": "descriptive-key", "session_id": "sid", "evidence": "what you saw", "agent_source": "rules-agent"}]
@@ -478,6 +601,14 @@ If the file already exists, read it first and append.`,
             tools: ['Read', 'Write', 'Edit', 'Glob'],
             maxTurns: 20,
           },
+          ...(skillCreatorPrompt ? {
+            "skill-agent": {
+              description: "Create SKILL.md files from detected workflow patterns. Writes actual skill files to .claude/skills/ and skills/ with dual-dir sync.",
+              prompt: skillCreatorPrompt,
+              tools: ['Read', 'Write', 'Glob'],
+              maxTurns: 12,
+            },
+          } : {}),
         },
       }
     });
@@ -517,69 +648,6 @@ If the file already exists, read it first and append.`,
     }
   } catch (err) {
     log(`quality-gate: failed (non-fatal): ${err.message}`);
-  }
-
-  // ②c Skill Detector — deterministic pattern detection (no LLM)
-  try {
-    const detectorResult = runSkillDetector(events, db);
-    log(`skill-detector: ${detectorResult.candidates} candidates, ` +
-        `${detectorResult.observations_written} written, ` +
-        `${detectorResult.discarded} discarded`);
-  } catch (err) {
-    log(`skill-detector: failed (non-fatal): ${err.message}`);
-  }
-
-  // ②d Skill Agent — LLM-powered prompt composition (every 3rd batch)
-  if (batchCount % 3 === 0) {
-    try {
-      const candidates = getGenerateCandidates(db);
-      if (candidates.length > 0) {
-        const existingSkills = loadExistingSkills(projectRoot);
-        const skillPrompt = buildSkillAgentPrompt(candidates, bulkPrompt, existingSkills, db);
-
-        log(`skill-agent: ${candidates.length} candidates, ${existingSkills.length} existing skills, composing prompts (batch #${batchCount})`);
-
-        // Ensure output directory exists
-        mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
-
-        const skillAc = new AbortController();
-        const skillTimer = setTimeout(() => skillAc.abort(), AGENT_TIMEOUT_MS);
-
-        try {
-          const skillResult = query({
-            prompt: skillPrompt,
-            options: {
-              model: 'sonnet',
-              cwd: projectRoot,
-              allowedTools: ['Read', 'Write', 'Glob'],
-              permissionMode: 'bypassPermissions',
-              allowDangerouslySkipPermissions: true,
-              abortController: skillAc,
-              maxTurns: 12,
-              maxBudgetUsd: 0.50,
-              persistSession: false,
-              settingSources: ['project'],
-              stderr: (data) => log(`[skill-stderr] ${data}`),
-            }
-          });
-
-          for await (const message of skillResult) {
-            if (message.type === 'result') {
-              const denials = message.permission_denials?.length ?? 0;
-              log(`skill-agent session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
-            }
-          }
-        } catch (err) {
-          log(`skill-agent: query failed (non-fatal): ${err.message}`);
-        } finally {
-          clearTimeout(skillTimer);
-        }
-      } else {
-        log(`skill-agent: no generate-ready candidates, skipping (batch #${batchCount})`);
-      }
-    } catch (err) {
-      log(`skill-agent: failed (non-fatal): ${err.message}`);
-    }
   }
 
   // ④ Check if context still changed after gate (reverts may have undone changes)
@@ -680,11 +748,7 @@ async function main() {
     }
   }
 
-  // Initialize skills-registry.json if it doesn't exist (SDEL-04 / SINT-05 support)
-  const registryBootstrapPath = resolve(projectRoot, '.claude-auto-context', 'skills-registry.json');
-  if (!existsSync(registryBootstrapPath)) {
-    writeFileSync(registryBootstrapPath, '[]');
-  }
+
 
   // Quality evaluations table
   db.run(`
@@ -713,34 +777,24 @@ async function main() {
     )
   `);
 
-  // On startup, immediately recover ALL orphaned processing events from previous worker
-  // This handles crash/SIGKILL scenarios where the previous worker left events stranded
+  // Recover orphaned processing events from previous worker (crash/SIGKILL)
   selfHeal(db, true);
   log('startup: recovered any orphaned processing events');
 
-  let lastEventTime = Date.now();
-
   try {
-    while (true) {
-      const batch = claimBatch(db);
-      if (batch.length > 0) {
-        lastEventTime = Date.now();
-        log(`claimed ${batch.length} events`);
-        try {
-          await processBatch(batch, db);
-          confirmBatch(db, batch.map(e => e.id));
-          log(`confirmed ${batch.length} events`);
-        } catch (err) {
-          log(`processBatch failed: ${err.message}`);
-          rejectBatch(db, batch.map(e => e.id));
-        }
-      } else {
-        if (Date.now() - lastEventTime >= IDLE_TIMEOUT_MS) {
-          log(`idle timeout — shutting down`);
-          break;
-        }
-        await Bun.sleep(POLL_INTERVAL_MS);
+    const batch = claimBatch(db);
+    if (batch.length > 0) {
+      log(`claimed ${batch.length} events`);
+      try {
+        await processBatch(batch, db);
+        confirmBatch(db, batch.map(e => e.id));
+        log(`confirmed ${batch.length} events`);
+      } catch (err) {
+        log(`processBatch failed: ${err.message}`);
+        rejectBatch(db, batch.map(e => e.id));
       }
+    } else {
+      log('no pending events — exiting');
     }
   } finally {
     db.close();
