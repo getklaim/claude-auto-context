@@ -25,16 +25,21 @@ Analyze session observation data to find conventions and implicit knowledge, the
 
 ## Output Format
 
-Each rules file uses YAML frontmatter with glob scoping:
+Each rules file uses YAML frontmatter with glob scoping and decay tracking:
 
 ```markdown
 ---
 globs: "src/auth/**"
+created: "2026-03-30"
+last_validated: "2026-03-30"
 ---
 
 [Description of the convention or implicit knowledge.]
 Evidence: observed in sessions [session_id_1, session_id_2].
 ```
+
+- `created`: ISO date when the rule was first written
+- `last_validated`: ISO date when the rule was last confirmed still relevant (set to today on create/update)
 
 ## Procedure
 
