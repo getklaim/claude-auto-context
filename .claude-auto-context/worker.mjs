@@ -477,6 +477,7 @@ pending
 async function processBatch(events, db) {
   const bulkPrompt = buildBulkPrompt(events);
   const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
+  const existingContextSummary = buildExistingContextSummary(projectRoot);
 
   // ① Snapshot context files (full content) before orchestrator
   const snapshotBefore = takeContentSnapshot(projectRoot);
@@ -487,18 +488,22 @@ async function processBatch(events, db) {
   try {
     const result = query({
       prompt: `${bulkPrompt}
-You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
+You are an orchestrator. Analyze the above session data and delegate to ALL FIVE agents below.
 You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
 
 1. rules-agent — Repeated conventions
    **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
-   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide (replacing CLAUDE.md additions for global knowledge).
-2. suggestion-agent — Structural issues (file bloat, misorganization)
-   Focus on "Tool Activity" sections for file patterns and structural signals (e.g. same large file read repeatedly).
+   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.
+2. suggestion-agent — AI-unfriendly code patterns and structural issues
+   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.
 3. hooks-agent — Detect repetitive manual actions and generate hook configurations
    **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
+4. skill-agent — Detect repeated multi-step workflows and create SKILL.md files
+   Analyzes raw session events for automation-worthy patterns. Writes to both .claude/skills/ and skills/.
+5. hygiene-agent — Context quality audit
+   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.
 
-Call all three agents now.`,
+Call all five agents now.`,
       options: {
         model: 'sonnet',
         cwd: projectRoot,
@@ -506,8 +511,8 @@ Call all three agents now.`,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         abortController: ac,
-        maxTurns: 20,
-        maxBudgetUsd: 1.00,
+        maxTurns: 25,
+        maxBudgetUsd: 2.00,
         persistSession: false,
         settingSources: ['project'],
         stderr: (data) => log(`[stderr] ${data}`),
