@@ -15,7 +15,7 @@ const SECRET_PATTERNS = [
   { regex: /(password|passwd|pwd|secret|token|api_key|apikey)\s*[:=]\s*\S+/gi, replacement: '$1=${REDACTED}' },
   { regex: /gh[ps]_[a-zA-Z0-9]{36,}/g, replacement: '${GITHUB_TOKEN}' },
   { regex: /npm_[a-zA-Z0-9]{36,}/g, replacement: '${NPM_TOKEN}' },
-  { regex: /\b[a-f0-9]{40,}\b/g, replacement: '${HASH}' },
+  { regex: /(?<=(?:key|secret|token|hash|signature|salt|credential|private.?key)\s*[:=]\s*)[a-f0-9]{40,}\b/gi, replacement: '${HASH}' },
 ];
 
 export function sanitizeSecrets(text) {
