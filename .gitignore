@@ -12,13 +12,23 @@ docs/.pdca-status.json
 node_modules/
 .claude-auto-context/db/
 .claude-auto-context/worker.lock
-.claude-auto-context/skills-registry.json
+.claude-auto-context/suggestions/
+.claude-auto-context/staged-hooks/
+.claude-auto-context/staged-rules/
+.claude-auto-context/skill-prompts/
+decisions.jsonl
+
+# Local hooks & rules (auto-extracted, not distributed)
+.claude/hooks/
+.claude/rules/local/
+
+# Utility scripts (local only)
+scripts/split-analyses.py
 
 # Development docs & research (local only)
 docs/
 research/
 test/**
-!test/skill-detector.test.mjs
 .DS_Store
 .omc/
 .planning/
