@@ -2,9 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   sanitizeSecrets,
   generalizeExample,
-  buildSkillAgentPrompt,
   loadExistingSkills,
-  getGenerateCandidates,
 } from './skill-prompt-builder.mjs';
 
 // ---------------------------------------------------------------------------
@@ -116,115 +114,5 @@ describe('generalizeExample', () => {
     const result = generalizeExample(input, ['Bash']);
     expect(result.generalizedPrompt).not.toContain('192.168.1.100');
     expect(result.generalizedPrompt).not.toContain('sk-ant-');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildSkillAgentPrompt
-// ---------------------------------------------------------------------------
-
-describe('buildSkillAgentPrompt', () => {
-  // Mock DB that returns empty results for buildNegativeExamples query
-  const mockDb = {
-    prepare: () => ({
-      all: () => [],
-    }),
-  };
-
-  const mockCandidates = [{
-    patternKey: 'skill:verb-chain:edit-test-commit',
-    sessions: [
-      { sessionId: 's1', promptFingerprint: 'fix the bug and run tests', toolSequence: ['Read', 'Edit', 'Bash', 'Write', 'Bash'] },
-      { sessionId: 's2', promptFingerprint: 'edit code then test and commit', toolSequence: ['Read', 'Edit', 'Bash', 'Write', 'Bash'] },
-      { sessionId: 's3', promptFingerprint: 'update and run tests then commit', toolSequence: ['Read', 'Edit', 'Bash', 'Write', 'Bash'] },
-    ],
-    evidence: {
-      prompt_fingerprint: 'fix the bug and run tests',
-      tool_sequence: ['Read', 'Edit', 'Bash', 'Write', 'Bash'],
-      compound_verbs: ['edit', 'test', 'commit'],
-      score: 12.5,
-      step_count: 8,
-      session_count_at_time: 3,
-      classification: 'skill',
-      classification_reason: 'NL trigger + mutation + 5+ steps',
-    },
-  }];
-
-  const mockSkills = [
-    { file: 'extract-rules', name: 'extract-rules', description: 'Extract conventions from session data' },
-  ];
-
-  test('contains What section with skill purpose', () => {
-    const prompt = buildSkillAgentPrompt(mockCandidates, '', mockSkills, mockDb);
-    expect(prompt).toContain('### What (Skill Purpose)');
-    expect(prompt).toContain('edit, test, commit');
-  });
-
-  test('contains When section with trigger conditions', () => {
-    const prompt = buildSkillAgentPrompt(mockCandidates, '', mockSkills, mockDb);
-    expect(prompt).toContain('### When (Trigger Conditions)');
-  });
-
-  test('contains Why section with automation value', () => {
-    const prompt = buildSkillAgentPrompt(mockCandidates, '', mockSkills, mockDb);
-    expect(prompt).toContain('### Why (Automation Value)');
-    expect(prompt).toContain('3 sessions');
-  });
-
-  test('contains When NOT to Use section (SPROM-04)', () => {
-    const prompt = buildSkillAgentPrompt(mockCandidates, '', mockSkills, mockDb);
-    expect(prompt).toContain('### When NOT to Use');
-  });
-
-  test('includes existing skills context (SINT-04)', () => {
-    const prompt = buildSkillAgentPrompt(mockCandidates, '', mockSkills, mockDb);
-    expect(prompt).toContain('Existing Skills');
-    expect(prompt).toContain('extract-rules');
-  });
-
-  test('includes bulk prompt excerpt (SINT-04)', () => {
-    const bulkPrompt = '# Observed Data: 10 events\n## Session: abc123';
-    const prompt = buildSkillAgentPrompt(mockCandidates, bulkPrompt, [], mockDb);
-    expect(prompt).toContain('Recent Session Data');
-    expect(prompt).toContain('Observed Data');
-  });
-
-  test('limits candidates to 3 max', () => {
-    const fourCandidates = [mockCandidates[0], mockCandidates[0], mockCandidates[0], mockCandidates[0]];
-    const prompt = buildSkillAgentPrompt(fourCandidates, '', [], mockDb);
-    const candidateHeaders = prompt.match(/## Candidate \d+:/g) || [];
-    expect(candidateHeaders.length).toBeLessThanOrEqual(3);
-  });
-
-  test('sanitizes secrets in prompt output', () => {
-    const candidateWithSecret = [{
-      ...mockCandidates[0],
-      patternKey: 'skill:seq:Read-Edit-Bash',
-      evidence: {
-        ...mockCandidates[0].evidence,
-        prompt_fingerprint: 'deploy to 192.168.1.100',
-      },
-    }];
-    const prompt = buildSkillAgentPrompt(candidateWithSecret, 'secret sk-ant-api03-FAKE123456789012345', [], mockDb);
-    expect(prompt).not.toContain('192.168.1.100');
-    expect(prompt).not.toContain('sk-ant-');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// batch cadence (SINT-02)
-// ---------------------------------------------------------------------------
-
-describe('batch cadence (SINT-02)', () => {
-  test('modulo 3 cadence: runs on batch 3, 6, 9', () => {
-    for (const n of [3, 6, 9, 12, 300]) {
-      expect(n % 3 === 0).toBe(true);
-    }
-  });
-
-  test('modulo 3 cadence: skips batch 1, 2, 4, 5', () => {
-    for (const n of [1, 2, 4, 5, 7, 8]) {
-      expect(n % 3 === 0).toBe(false);
-    }
   });
 });

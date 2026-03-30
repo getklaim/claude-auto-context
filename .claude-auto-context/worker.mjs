@@ -9,7 +9,6 @@ import { existsSync, writeFileSync, unlinkSync, appendFileSync, mkdirSync, readd
 import { resolve, relative } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { takeContentSnapshot, hasContentChanged, runQualityGate } from './quality-gate.mjs';
-import { buildSkillCreatorPrompt, loadExistingSkills, getGenerateCandidates } from './skill-prompt-builder.mjs';
 
 // Prevent "cannot be launched inside another Claude Code session" error
 delete process.env.CLAUDECODE;
@@ -23,8 +22,6 @@ const logPath = resolve(dbDir, 'worker.log');
 const STALE_THRESHOLD_S = 200;       // 200s → self-heal (just above AGENT_TIMEOUT_MS/1000)
 const MAX_RETRIES = 3;
 const AGENT_TIMEOUT_MS = 3 * 60_000; // 3min per agent session
-
-let batchCount = 0;
 
 // --- Logging ---
 // NOTE: SIGKILL cannot be caught, so the lock file may be left behind on hard kills.
@@ -109,61 +106,6 @@ function rejectBatch(db, ids) {
     WHERE id=?
   `);
   db.transaction(() => { for (const id of ids) stmt.run(id); })();
-}
-
-// --- Observations (Cross-Cycle Memory) ---
-
-const OBSERVATIONS_FILE = resolve(projectRoot, '.claude-auto-context', 'pending-observations.json');
-
-function buildObservationsContext(db) {
-  const rows = db.prepare(`
-    SELECT pattern_key, GROUP_CONCAT(DISTINCT session_id) AS sessions,
-           COUNT(DISTINCT session_id) AS session_count,
-           GROUP_CONCAT(evidence, ' | ') AS evidences,
-           agent_source
-    FROM observations
-    GROUP BY pattern_key
-    ORDER BY session_count DESC, MAX(created_at) DESC
-  `).all();
-
-  if (rows.length === 0) return '';
-
-  let out = `\n# Cross-Cycle Observations (${rows.length} patterns from previous cycles)\n`;
-  out += `These are candidate patterns observed in prior poll cycles but not yet promoted to rules/hooks.\n`;
-  out += `Use these as context when judging whether a pattern in the current batch warrants promotion.\n\n`;
-
-  for (const r of rows) {
-    out += `- **${r.pattern_key}** (${r.session_count} sessions: ${r.sessions})\n`;
-    out += `  Evidence: ${r.evidences.slice(0, 500)}\n`;
-    out += `  Source: ${r.agent_source}\n`;
-  }
-  return out;
-}
-
-function collectObservations(db) {
-  if (!existsSync(OBSERVATIONS_FILE)) return;
-  try {
-    const raw = readFileSync(OBSERVATIONS_FILE, 'utf8');
-    const entries = JSON.parse(raw);
-    if (!Array.isArray(entries)) return;
-
-    const stmt = db.prepare(`
-      INSERT OR IGNORE INTO observations (pattern_key, session_id, evidence, agent_source)
-      VALUES (?, ?, ?, ?)
-    `);
-    db.transaction(() => {
-      for (const e of entries) {
-        if (e.pattern_key && e.session_id && e.evidence && e.agent_source) {
-          stmt.run(e.pattern_key, e.session_id, e.evidence, e.agent_source);
-        }
-      }
-    })();
-    unlinkSync(OBSERVATIONS_FILE);
-    log(`observations: collected ${entries.length} entries`);
-  } catch (err) {
-    log(`observations: failed to collect: ${err.message}`);
-    try { unlinkSync(OBSERVATIONS_FILE); } catch {}
-  }
 }
 
 // --- Bulk Prompt Builder ---
@@ -479,30 +421,8 @@ pending
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
-  batchCount++;
   const bulkPrompt = buildBulkPrompt(events);
-  const observationsContext = buildObservationsContext(db);
   const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
-
-  // Build skill-agent context (every 100th batch)
-  const isSkillBatch = batchCount % 100 === 0;
-  let skillCreatorPrompt = null;
-  if (isSkillBatch) {
-    const skillCandidates = getGenerateCandidates(db);
-    if (skillCandidates.length > 0) {
-      const existingSkills = loadExistingSkills(projectRoot);
-      skillCreatorPrompt = buildSkillCreatorPrompt(skillCandidates, existingSkills, db);
-      log(`skill-agent: ${skillCandidates.length} candidates, ${existingSkills.length} existing skills (batch #${batchCount})`);
-    } else {
-      log(`skill-agent: no candidates, skipping (batch #${batchCount})`);
-    }
-  }
-
-  const agentCount = skillCreatorPrompt ? 4 : 3;
-  const skillOrchestratorLine = skillCreatorPrompt
-    ? `\n4. skill-agent — Create SKILL.md files from detected workflow patterns
-   Produces actual skill files in .claude/skills/ and skills/ (dual-dir sync).`
-    : '';
 
   // ① Snapshot context files (full content) before orchestrator
   const snapshotBefore = takeContentSnapshot(projectRoot);
@@ -513,21 +433,18 @@ async function processBatch(events, db) {
   try {
     const result = query({
       prompt: `${bulkPrompt}
-${observationsContext}
-You are an orchestrator. Analyze the above session data and delegate to ALL ${agentCount === 4 ? 'FOUR' : 'THREE'} agents below.
+You are an orchestrator. Analyze the above session data and delegate to ALL THREE agents below.
 You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
 
 1. rules-agent — Repeated conventions
    **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
-   Has access to cross-cycle observations from previous batches.
    Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide (replacing CLAUDE.md additions for global knowledge).
 2. suggestion-agent — Structural issues (file bloat, misorganization)
    Focus on "Tool Activity" sections for file patterns and structural signals (e.g. same large file read repeatedly).
 3. hooks-agent — Detect repetitive manual actions and generate hook configurations
    **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
-   Has access to cross-cycle observations from previous batches.${skillOrchestratorLine}
 
-Call all ${agentCount === 4 ? 'four' : 'three'} agents now.`,
+Call all three agents now.`,
       options: {
         model: 'sonnet',
         cwd: projectRoot,
@@ -536,25 +453,20 @@ Call all ${agentCount === 4 ? 'four' : 'three'} agents now.`,
         allowDangerouslySkipPermissions: true,
         abortController: ac,
         maxTurns: 20,
-        maxBudgetUsd: skillCreatorPrompt ? 1.50 : 1.00,
+        maxBudgetUsd: 1.00,
         persistSession: false,
         settingSources: ['project'],
         stderr: (data) => log(`[stderr] ${data}`),
         agents: {
           "rules-agent": {
-            description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Analyzes session patterns and cross-cycle observations to judge which conventions warrant rules.",
+            description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Analyzes session patterns to judge which conventions warrant rules.",
             prompt: `Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.
 ${rulesTopicIndex}
 
 ## Description maintenance
 Rules listed under "Without description — local" are missing a description: field in their YAML frontmatter.
 Before creating new rules, Read each of these files, then add a one-line description: to their frontmatter.
-Rules listed under "Without description — committed" are human-authored. Read them to understand their content and avoid duplicates, but do NOT modify them.
-
-${observationsContext}
-After analysis, write any new candidate patterns (not yet strong enough for a rule) to .claude-auto-context/pending-observations.json as a JSON array:
-[{"pattern_key": "descriptive-key", "session_id": "sid", "evidence": "what you saw", "agent_source": "rules-agent"}]
-If the file already exists, read it first and append.`,
+Rules listed under "Without description — committed" are human-authored. Read them to understand their content and avoid duplicates, but do NOT modify them.`,
             tools: ['Read', 'Write', 'Edit', 'Glob'],
             skills: ['extract-rules'],
             maxTurns: 20,
@@ -569,46 +481,33 @@ If the file already exists, read it first and append.`,
           "hooks-agent": {
             description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
             prompt: `You analyze session data to detect patterns that should become automated hooks.
-${observationsContext}
+
 ## What to detect
 
 1. **Formatter/Linter patterns**: Same lint/format command run manually after edits (eslint, prettier, black, gofmt)
-   → Generate PostToolUse:Edit|Write hook to auto-run
+   -> Generate PostToolUse:Edit|Write hook to auto-run
 2. **Dangerous commands**: rm -rf, git push --force, git reset --hard, DROP TABLE
-   → Generate PreToolUse:Bash hook with exit 2 to block
+   -> Generate PreToolUse:Bash hook with exit 2 to block
 3. **Secret/credential writes**: .env, .pem, .key files being written
-   → Generate PreToolUse:Write|Edit hook with exit 2 to block
+   -> Generate PreToolUse:Write|Edit hook with exit 2 to block
 4. **Test-before-stop**: Test suite run at session end repeatedly
-   → Generate Stop hook to auto-run tests
+   -> Generate Stop hook to auto-run tests
 
 ## Judgment guidance
-- Use the session data and cross-cycle observations to judge whether a pattern is a genuine habit vs one-off noise
+- Use the session data to judge whether a pattern is a genuine habit vs one-off noise
 - Consider: frequency, consistency across sessions, user intent signals
 - Dangerous commands (rm -rf, force push) and secret writes (.env, .pem) warrant immediate action regardless of frequency
 
 ## Output rules
 - Write hook scripts to target project's .claude/hooks/ directory
-- Update target project's .claude/settings.json (read → parse → merge → write)
+- Update target project's .claude/settings.json (read -> parse -> merge -> write)
 - NEVER modify the plugin's hooks/hooks.json
 - All PostToolUse/Stop hooks must include CAC_HOOK_RUNNING re-entry guard
 - Hook scripts must use static command strings only (no dynamic session data injection)
-- Maximum 1 hook per batch to avoid hook accumulation
-
-## Observations
-After analysis, write any new candidate patterns (not yet at threshold) to .claude-auto-context/pending-observations.json as a JSON array:
-[{"pattern_key": "descriptive-key", "session_id": "sid", "evidence": "what you saw", "agent_source": "hooks-agent"}]
-If the file already exists, read it first and append.`,
+- Maximum 1 hook per batch to avoid hook accumulation`,
             tools: ['Read', 'Write', 'Edit', 'Glob'],
             maxTurns: 20,
           },
-          ...(skillCreatorPrompt ? {
-            "skill-agent": {
-              description: "Create SKILL.md files from detected workflow patterns. Writes actual skill files to .claude/skills/ and skills/ with dual-dir sync.",
-              prompt: skillCreatorPrompt,
-              tools: ['Read', 'Write', 'Glob'],
-              maxTurns: 12,
-            },
-          } : {}),
         },
       }
     });
@@ -626,10 +525,7 @@ If the file already exists, read it first and append.`,
     clearTimeout(timer);
   }
 
-  // ② Collect observations written by agents (file → DB)
-  collectObservations(db);
-
-  // ③ Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
+  // ② Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
   try {
     const gate = runQualityGate(snapshotBefore, projectRoot);
     if (gate.evaluated > 0) {
@@ -650,7 +546,7 @@ If the file already exists, read it first and append.`,
     log(`quality-gate: failed (non-fatal): ${err.message}`);
   }
 
-  // ④ Check if context still changed after gate (reverts may have undone changes)
+  // ③ Check if context still changed after gate (reverts may have undone changes)
   const snapshotAfter = takeContentSnapshot(projectRoot);
 
   if (!hasContentChanged(snapshotBefore, snapshotAfter)) {
@@ -728,7 +624,6 @@ async function main() {
   // Ensure output directories exist
   mkdirSync(resolve(projectRoot, '.claude', 'rules', 'local'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
-  mkdirSync(resolve(projectRoot, '.claude-auto-context', 'skill-prompts'), { recursive: true });
 
   // Ensure .claude/settings.json exists so sub-agents have Write permission for rules/suggestions
   const settingsPath = resolve(projectRoot, '.claude', 'settings.json');
@@ -764,22 +659,19 @@ async function main() {
     )
   `);
 
-  // Cross-cycle observations table — agent working memory across poll cycles
-  db.run(`
-    CREATE TABLE IF NOT EXISTS observations (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      pattern_key  TEXT NOT NULL,
-      session_id   TEXT NOT NULL,
-      evidence     TEXT NOT NULL,
-      agent_source TEXT NOT NULL,
-      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(pattern_key, session_id)
-    )
-  `);
-
   // Recover orphaned processing events from previous worker (crash/SIGKILL)
   selfHeal(db, true);
   log('startup: recovered any orphaned processing events');
+
+  // Check pending event count — skip if below threshold
+  const { cnt } = db.prepare(`SELECT COUNT(*) as cnt FROM raw_events WHERE status='pending'`).get();
+  if (cnt < 100) {
+    log(`threshold: ${cnt} pending events < 100, skipping batch`);
+    db.close();
+    cleanup();
+    return;
+  }
+  log(`threshold: ${cnt} pending events >= 100, proceeding`);
 
   try {
     const batch = claimBatch(db);
