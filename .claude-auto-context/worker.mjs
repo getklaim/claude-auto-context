@@ -482,7 +482,7 @@ You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work
 3. hooks-agent — Detect repetitive manual actions and generate hook configurations
    **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
 4. skill-agent — Detect repeated multi-step workflows and create SKILL.md files
-   Analyzes raw session events for automation-worthy patterns. Writes to both .claude/skills/ and skills/.
+   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.
 5. hygiene-agent — Context quality audit
    Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.
 
@@ -622,7 +622,7 @@ You analyze session data to detect patterns that should become automated hooks.
             maxTurns: 20,
           },
           "skill-agent": {
-            description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to both .claude/skills/ and skills/ (dual-dir sync).",
+            description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
             prompt: `${existingContextSummary}
 
 ## Conservative Behavior (ORCH-03)
@@ -655,11 +655,8 @@ If a candidate fails: log "SKIP: {pattern} — {reason}" and create nothing.
 
 ## Output: SKILL.md Format (SKIL-03)
 
-Create SKILL.md in BOTH locations (dual-dir sync):
+Create SKILL.md in the target project's .claude/skills/ directory only:
 - \`.claude/skills/{skill-name}/SKILL.md\`
-- \`skills/{skill-name}/SKILL.md\`
-
-Both copies MUST be identical.
 
 Use this exact format:
 \`\`\`markdown
@@ -694,7 +691,6 @@ Check the "Skills" section in the context summary above. Do NOT create a skill t
 ## Rules
 - Maximum 1 skill per batch. Pick the strongest candidate.
 - If no candidate passes the Necessity Gate, create nothing. Most sessions will NOT yield a skill.
-- Both SKILL.md copies must be identical (dual-dir sync).
 - Use concrete tool names and file patterns from the session data, not generic placeholders.`,
             tools: ['Read', 'Write', 'Glob'],
             maxTurns: 20,
