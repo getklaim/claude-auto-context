@@ -519,7 +519,14 @@ Call all five agents now.`,
         agents: {
           "rules-agent": {
             description: "Extract conventions and implicit knowledge from session data into .claude/rules/ files. Analyzes session patterns to judge which conventions warrant rules.",
-            prompt: `Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.
+            prompt: `${existingContextSummary}
+
+## Conservative Behavior (ORCH-03)
+Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+Follow the extract-rules skill instructions precisely. Analyze the session data provided by the orchestrator and create/update glob-scoped rules files.
 ${rulesTopicIndex}
 
 ## Description maintenance
@@ -532,14 +539,28 @@ Rules listed under "Without description — committed" are human-authored. Read 
           },
           "suggestion-agent": {
             description: "Detect structural issues and create proposal files in .claude-auto-context/suggestions/. Use when file splits, directory reorganization, or pattern changes are needed.",
-            prompt: "Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.",
+            prompt: `${existingContextSummary}
+
+## Conservative Behavior (ORCH-03)
+Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+Follow the create-suggestion skill instructions precisely. Analyze the session data provided by the orchestrator and create suggestion files with quantitative evidence.`,
             tools: ['Read', 'Write', 'Glob'],
             skills: ['create-suggestion'],
             maxTurns: 20,
           },
           "hooks-agent": {
             description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
-            prompt: `You analyze session data to detect patterns that should become automated hooks.
+            prompt: `${existingContextSummary}
+
+## Conservative Behavior (ORCH-03)
+Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+You analyze session data to detect patterns that should become automated hooks.
 
 ## What to detect
 
