@@ -158,6 +158,32 @@ function checkSuggestionStatus(content) {
     passed: true, detail: 'Status: pending' };
 }
 
+function checkSuggestionNotDuplicate(content, existingSuggestions) {
+  const body = extractBody(content);
+  for (const [path, existing] of Object.entries(existingSuggestions)) {
+    const existingBody = extractBody(existing);
+    if (existingBody.length < 20) continue;
+    const sim = jaccardSimilarity(body, existingBody);
+    if (sim > 0.6) {
+      return { id: 'Q-12', name: 'suggestion-not-duplicate', severity: 'critical',
+        passed: false, detail: `${Math.round(sim * 100)}% similar to ${basename(path)}` };
+    }
+  }
+  return { id: 'Q-12', name: 'suggestion-not-duplicate', severity: 'critical',
+    passed: true, detail: 'No duplicate suggestions' };
+}
+
+function checkSuggestionCountCap(existingSuggestions) {
+  const MAX_PENDING = 10;
+  const pendingCount = Object.values(existingSuggestions).filter(c =>
+    /## Status\npending/.test(c)
+  ).length;
+  const ok = pendingCount < MAX_PENDING;
+  return { id: 'Q-13', name: 'suggestion-count-cap', severity: 'critical',
+    passed: ok,
+    detail: ok ? `${pendingCount} pending (max ${MAX_PENDING})` : `${pendingCount} pending — cap reached (max ${MAX_PENDING}), rejecting new suggestion` };
+}
+
 // ─── Snapshot ───────────────────────────────────────────
 
 export function takeContentSnapshot(projectRoot) {
@@ -197,7 +223,7 @@ export function hasContentChanged(before, after) {
 
 // ─── File Evaluator ─────────────────────────────────────
 
-function evaluateFile(filePath, contentAfter, contentBefore, fileType, existingRules, projectRoot) {
+function evaluateFile(filePath, contentAfter, contentBefore, fileType, existingRules, existingSuggestions, projectRoot) {
   let content = contentAfter;
   const checks = [];
   const autoFixes = [];
@@ -214,7 +240,9 @@ function evaluateFile(filePath, contentAfter, contentBefore, fileType, existingR
   } else if (fileType === 'suggestion') {
     checks.push(
       checkSuggestionSections(content),
-      checkSuggestionStatus(content)
+      checkSuggestionStatus(content),
+      checkSuggestionNotDuplicate(content, existingSuggestions),
+      checkSuggestionCountCap(existingSuggestions)
     );
   }
 
@@ -275,13 +303,19 @@ export function runQualityGate(snapshotBefore, projectRoot) {
     if (path.startsWith(rulesDir + '/')) existingRules[path] = content;
   }
 
+  // Build existing suggestions map (pre-change state) for dedup + count cap
+  const existingSuggestions = {};
+  for (const [path, content] of Object.entries(snapshotBefore)) {
+    if (path.startsWith(suggestionsDir + '/')) existingSuggestions[path] = content;
+  }
+
   const results = [];
   let passed = 0, failed = 0, autoFixed = 0;
 
   for (const change of changes) {
     const result = evaluateFile(
       change.path, change.contentAfter, change.contentBefore,
-      change.fileType, existingRules, projectRoot
+      change.fileType, existingRules, existingSuggestions, projectRoot
     );
     result.action = change.action;
 
@@ -297,9 +331,11 @@ export function runQualityGate(snapshotBefore, projectRoot) {
     } else {
       result.reverted = false;
       passed++;
-      // Track passed rules for cross-batch duplicate detection
+      // Track passed artifacts for within-batch duplicate detection
       if (change.fileType === 'rule') {
         existingRules[change.path] = result.content;
+      } else if (change.fileType === 'suggestion') {
+        existingSuggestions[change.path] = result.content;
       }
     }
 
