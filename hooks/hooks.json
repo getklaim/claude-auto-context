@@ -41,6 +41,24 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/bump-version.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/block-conflict-markers-on-stage.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/.claude/hooks/block-planning-files-on-stage.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
