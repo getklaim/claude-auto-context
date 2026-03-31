@@ -1,30 +1,27 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Unified Architecture
-status: Defining requirements
-last_updated: "2026-03-31T03:29:47.355Z"
-last_activity: 2026-03-31 — Milestone v3.0 started
+milestone: v3.0
+milestone_name: Codebase-Aware Context Engine
+status: unknown
+last_updated: "2026-03-31T03:23:37.411Z"
 progress:
   total_phases: 2
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 0
+  total_plans: 1
+  completed_plans: 0
 ---
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-31 — Milestone v3.0 started
+Phase: 16 (codebase-map) — EXECUTING
+Plan: 1 of 1
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** Continuously improve Claude Code's project understanding by extracting patterns from real usage
-**Current focus:** v3.0 — MAP.md + lightweight worker rewrite
+**Current focus:** Phase 16 — codebase-map
 
 ## Accumulated Context
 

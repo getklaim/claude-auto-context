@@ -31,3 +31,4 @@ test/**
 .DS_Store
 .omc/
 .planning/
+_workspace/

@@ -1,0 +1,8 @@
+[
+  {
+    "pattern_key": "skip-discussion-just-start",
+    "session_id": "1b3175cd-ae47-4fdd-91c9-62be6622785e",
+    "evidence": "User said '아니다 걍 discuss 안하고 시작 ㄱㄱ' — Claude was about to discuss/plan before acting; user had to explicitly say to skip discussion and start working immediately",
+    "agent_source": "rules-agent"
+  }
+]
