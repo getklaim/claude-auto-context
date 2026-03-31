@@ -1,27 +1,29 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Unified Architecture
-status: unknown
-last_updated: "2026-03-30T03:50:24.297Z"
+milestone: v3.0
+milestone_name: Codebase-Aware Context Engine
+status: defining_requirements
+last_updated: "2026-03-31T12:00:00Z"
 progress:
-  total_phases: 2
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 ## Current Position
 
-Phase: 15 (cleanup-and-infrastructure) — COMPLETE
-Plan: 2 of 2 (15-02 COMPLETE)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-31 — Milestone v3.0 started
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-30)
+See: .planning/PROJECT.md (updated 2026-03-31)
 
 **Core value:** Continuously improve Claude Code's project understanding by extracting patterns from real usage
-**Current focus:** Phase 15 — COMPLETE (milestone v2.0 ready)
+**Current focus:** v3.0 — MAP.md + lightweight worker rewrite
 
 ## Accumulated Context
 
@@ -29,8 +31,9 @@ See: .planning/PROJECT.md (updated 2026-03-30)
 - v1.1 shipped: hooks-agent (pattern detection, hook generation)
 - v1.2 shipped: local isolation (rules/local, claudemd-agent removed)
 - v1.3 shipped: skill-agent (detection, prompt composition, delivery)
-- v1.4 partial: Phase 11 completed (infrastructure fixes — settings.json auto-create, structured logging, maxTurns increase)
-- v1.4 incomplete: Phases 12-14 not started (hooks silent failures, ghost agent, judgment prompts, quality measurement)
-- **15-01 COMPLETE (2026-03-30):** Removed observations system, batchCount, skill-agent orchestration; added 100-event batch threshold; skill-prompt-builder.mjs reduced to 3 utility exports
-- **15-02 COMPLETE (2026-03-30):** Unified 5-agent orchestrator (rules, suggestion, hooks, skill, hygiene) in single query(); buildExistingContextSummary for deduplication; AI-unfriendly detection in suggestion-agent; skill-agent with Necessity Gate; hygiene folded in; $2.00 budget
-- **Architecture state:** Worker is now a clean 5-agent orchestrator with context-aware deduplication; all 12 requirements (ORCH, HYGI, SUGG, SKIL) addressed
+- v1.4 partial: Phase 11 only (infrastructure fixes)
+- v2.0 shipped: 5-agent unified orchestrator, observations/registry removed, 100-event threshold
+- **v3.0 planning:** Deep research done (16 competitors, GSD analysis, ETH Zurich study, Boris Cherny practices)
+- **Key insight:** event logs (user prompts) = primary signal, codebase reading = reference context
+- **Key insight:** Boris Test — "이 규칙 지우면 Claude가 실수하나?" No면 안 만듦
+- **Key insight:** MAP.md = 파일별 한 줄 설명 지도, ~2KB, 프롬프트에 내용 삽입 X → 경로만 전달
