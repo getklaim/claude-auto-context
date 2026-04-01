@@ -17,6 +17,25 @@ if ! command -v jq &> /dev/null; then
   echo "  Install: brew install jq (macOS) or apt install jq (Linux)"
 fi
 
+# Check if skill-creator is installed (SDEL-03)
+if ! command -v skill-creator &> /dev/null; then
+  echo "Auto Context: skill-creator not found — /cac-create-skill will not function."
+  echo "  Install: https://github.com/anthropics/skills (sparse checkout skill-creator)"
+fi
+
+# Ensure local rules directory exists (auto-generated rules go here)
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+mkdir -p "$PROJECT_DIR/.claude/rules/local"
+
+# Add .claude/rules/local/ to .gitignore (idempotent)
+GITIGNORE="$PROJECT_DIR/.gitignore"
+ENTRY=".claude/rules/local/"
+if [ -f "$GITIGNORE" ]; then
+  grep -qxF "$ENTRY" "$GITIGNORE" || echo "$ENTRY" >> "$GITIGNORE"
+else
+  echo "$ENTRY" > "$GITIGNORE"
+fi
+
 # Auto-cleanup stale rules and skills
 "$SCRIPT_DIR/auto-cleanup.sh" 2>/dev/null || true
 

@@ -12,10 +12,23 @@ docs/.pdca-status.json
 node_modules/
 .claude-auto-context/db/
 .claude-auto-context/worker.lock
+.claude-auto-context/suggestions/
+.claude-auto-context/staged-hooks/
+.claude-auto-context/staged-rules/
+.claude-auto-context/skill-prompts/
+decisions.jsonl
+
+# .claude/ is the user's project-local config — not part of the plugin
+.claude/
+
+# Utility scripts (local only)
+scripts/split-analyses.py
 
 # Development docs & research (local only)
 docs/
 research/
-test/
+test/**
 .DS_Store
 .omc/
+.planning/
+_workspace/
