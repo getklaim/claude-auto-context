@@ -11,6 +11,12 @@ if ! command -v bun &> /dev/null; then
   export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 
+# Warn if jq is missing (needed for bump-version.sh)
+if ! command -v jq &> /dev/null; then
+  echo "[auto-context] Warning: jq not found. Version auto-bump disabled."
+  echo "  Install: brew install jq (macOS) or apt install jq (Linux)"
+fi
+
 # Check if skill-creator is installed (SDEL-03)
 if ! command -v skill-creator &> /dev/null; then
   echo "Auto Context: skill-creator not found — /cac-create-skill will not function."
@@ -30,7 +36,7 @@ else
   echo "$ENTRY" > "$GITIGNORE"
 fi
 
-# Convention decay: force-delete rules older than 60 days
+# Auto-cleanup: convention decay + stale rules/skills
 "$SCRIPT_DIR/auto-cleanup.sh" 2>/dev/null || true
 
 exit 0

@@ -3,8 +3,8 @@
 # Skip Stop event storage (collector handles this).
 # Launch worker if ≥100 pending events.
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+source "$(dirname "$0")/common.sh"
+
 BATCH_THRESHOLD=100
 
 # Stop events are no longer stored — collector.mjs exits early for Stop hook.
@@ -17,5 +17,7 @@ if [ -f "$DB_PATH" ]; then
     "$PLUGIN_ROOT/scripts/worker-launcher.sh" "$PROJECT_DIR" &
   fi
 fi
+
+log "Session stopped"
 
 exit 0
