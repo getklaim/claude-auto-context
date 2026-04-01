@@ -607,7 +607,18 @@ async function processBatch(events, db) {
   initBatchCache(db);
 
   const { prompt: bulkPrompt, includedIds } = buildBulkPrompt(events);
-  const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
+
+  // Cache rulesTopicIndex — skip file I/O if rules haven't changed
+  const rulesHash = computeRulesHash(projectRoot);
+  const cachedIndex = getCacheEntry(db, 'rules_topic_index');
+  let rulesTopicIndex;
+  if (cachedIndex && cachedIndex.hash === rulesHash) {
+    rulesTopicIndex = cachedIndex.value;
+    log('cache hit: rules_topic_index');
+  } else {
+    rulesTopicIndex = buildRulesTopicIndex(projectRoot);
+    setCacheEntry(db, 'rules_topic_index', rulesTopicIndex, rulesHash);
+  }
 
   // Build agents object conditionally — only include agents that pass shouldRunAgent
   const agents = {};
@@ -616,13 +627,7 @@ async function processBatch(events, db) {
     const rulesContext = buildContextForAgent(projectRoot, ['rules', 'skills']);
     agents['rules-agent'] = {
       description: "Extract implicit conventions from user corrections in session data. Creates .claude/rules/ files following Boris Cherny's 'institutional memory' pattern: past mistakes become permanent rules.",
-      prompt: `${rulesContext}
-
-## Conservative Behavior (ORCH-03)
-Before creating any new rule, check the context summary above.
-If a similar artifact already exists, SKIP or UPDATE. Log "skipped — already exists: {name}".
-
-## Your Role: Institutional Memory Builder
+      prompt: `## Your Role: Institutional Memory Builder
 You turn user corrections into permanent rules (Boris Cherny pattern).
 When a user says "don't do X" or "use Y instead", that correction becomes a rule so Claude never repeats the mistake.
 
@@ -652,11 +657,18 @@ For every candidate: "Would removing this rule cause Claude to make mistakes?"
 If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
 
 Follow the extract-rules skill instructions for output format and procedure.
-${rulesTopicIndex}
 
 ## Description maintenance
 Rules listed "Without description — local": Read and add description: field.
-Rules listed "Without description — committed": Read for context, do NOT modify.`,
+Rules listed "Without description — committed": Read for context, do NOT modify.
+
+## Conservative Behavior (ORCH-03)
+Before creating any new rule, check the context summary above.
+If a similar artifact already exists, SKIP or UPDATE. Log "skipped — already exists: {name}".
+
+--- Dynamic Context ---
+${rulesContext}
+${rulesTopicIndex}`,
       tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
       skills: ['extract-rules'],
       maxTurns: 15,
@@ -667,14 +679,7 @@ Rules listed "Without description — committed": Read for context, do NOT modif
     const suggestionContext = buildContextForAgent(projectRoot, ['suggestions', 'rules']);
     agents['suggestion-agent'] = {
       description: "Detect AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/ with related file lists and quantitative evidence.",
-      prompt: `${suggestionContext}
-
-## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
-If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
-Log "skipped — already exists: {name}" when you skip.
-
-You are a codebase optimization agent. Analyze the session data provided by the orchestrator to detect AI-unfriendly code patterns.
+      prompt: `You are a codebase optimization agent. Analyze the session data provided by the orchestrator to detect AI-unfriendly code patterns.
 
 ## What to detect (SUGG-01, SUGG-02)
 
@@ -728,7 +733,15 @@ pending
 - Before creating a suggestion, READ the Description of each existing suggestion in the context summary. If your finding overlaps with an existing suggestion (same root cause or same target file), SKIP it. Log "skipped — overlaps with: {existing title}"
 - Maximum 2 suggestions per batch to avoid noise. The quality gate will reject suggestions beyond 10 total pending.
 - Only create suggestions with strong quantitative evidence (3+ occurrences)
-- If the quality gate rejects your suggestion as a duplicate, that is correct behavior — do not retry`,
+- If the quality gate rejects your suggestion as a duplicate, that is correct behavior — do not retry
+
+## Conservative Behavior (ORCH-03)
+Before creating any new suggestion, check the context summary below.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+--- Dynamic Context ---
+${suggestionContext}`,
       tools: ['Read', 'Write', 'Glob', 'Bash'],
       skills: ['create-suggestion'],
       maxTurns: 20,
@@ -739,14 +752,7 @@ pending
     const hooksContext = buildContextForAgent(projectRoot, ['hooks']);
     agents['hooks-agent'] = {
       description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
-      prompt: `${hooksContext}
-
-## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
-If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
-Log "skipped — already exists: {name}" when you skip.
-
-You analyze session data to detect patterns that should become automated hooks.
+      prompt: `You analyze session data to detect patterns that should become automated hooks.
 
 ## What to detect
 
@@ -780,7 +786,15 @@ The \`# Description:\` line is mandatory. It is parsed by the orchestrator for c
 - NEVER modify the plugin's hooks/hooks.json
 - All PostToolUse/Stop hooks must include CAC_HOOK_RUNNING re-entry guard
 - Hook scripts must use static command strings only (no dynamic session data injection)
-- Maximum 1 hook per batch to avoid hook accumulation`,
+- Maximum 1 hook per batch to avoid hook accumulation
+
+## Conservative Behavior (ORCH-03)
+Before creating any new hook, check the context summary below.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+--- Dynamic Context ---
+${hooksContext}`,
       tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
       maxTurns: 20,
     };
@@ -790,14 +804,7 @@ The \`# Description:\` line is mandatory. It is parsed by the orchestrator for c
     const skillContext = buildContextForAgent(projectRoot, ['skills']);
     agents['skill-agent'] = {
       description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
-      prompt: `${skillContext}
-
-## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
-If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
-Log "skipped — already exists: {name}" when you skip.
-
-You are a skill extraction agent. Analyze the raw session events provided by the orchestrator to detect repeated multi-step workflows that deserve to become reusable skills.
+      prompt: `You are a skill extraction agent. Analyze the raw session events provided by the orchestrator to detect repeated multi-step workflows that deserve to become reusable skills.
 
 ## What to detect (SKIL-02)
 
@@ -860,7 +867,15 @@ Check the "Skills" section in the context summary above. Do NOT create a skill t
 ## Rules
 - Maximum 1 skill per batch. Pick the strongest candidate.
 - If no candidate passes the Necessity Gate, create nothing. Most sessions will NOT yield a skill.
-- Use concrete tool names and file patterns from the session data, not generic placeholders.`,
+- Use concrete tool names and file patterns from the session data, not generic placeholders.
+
+## Conservative Behavior (ORCH-03)
+Before creating any new skill, check the context summary below.
+If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
+Log "skipped — already exists: {name}" when you skip.
+
+--- Dynamic Context ---
+${skillContext}`,
       tools: ['Read', 'Write', 'Glob', 'Bash'],
       maxTurns: 20,
     };
