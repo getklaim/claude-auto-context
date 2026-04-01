@@ -3,6 +3,8 @@
 # Auto-bumps plugin version before git commit.
 # Syncs version across plugin.json, marketplace.json, and package.json.
 
+source "$(dirname "$0")/common.sh"
+
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
@@ -11,9 +13,15 @@ if ! echo "$COMMAND" | grep -qE '^git\s+commit|&&\s*git\s+commit'; then
   exit 0
 fi
 
+# Check jq dependency
+if ! has_jq; then
+  log_error "jq not found, skipping version bump"
+  exit 0
+fi
+
 # Find plugin.json relative to project dir
-PROJECT_DIR=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
-PLUGIN_JSON="${PROJECT_DIR:-.}/.claude-plugin/plugin.json"
+PROJ_DIR=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+PLUGIN_JSON="${PROJ_DIR:-.}/.claude-plugin/plugin.json"
 
 if [ ! -f "$PLUGIN_JSON" ]; then
   exit 0
@@ -21,7 +29,7 @@ fi
 
 # Check if there are staged changes beyond version-managed files
 VERSION_FILES='.claude-plugin/plugin.json\|.claude-plugin/marketplace.json\|package.json'
-STAGED=$(cd "$PROJECT_DIR" && git diff --cached --name-only 2>/dev/null | grep -v "$VERSION_FILES")
+STAGED=$(cd "$PROJ_DIR" && git diff --cached --name-only 2>/dev/null | grep -v "$VERSION_FILES")
 if [ -z "$STAGED" ]; then
   exit 0
 fi
@@ -38,7 +46,7 @@ NEW_VERSION=$(echo "$CURRENT" | awk -F. '{print $1"."$2"."$3+1}')
 jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > "${PLUGIN_JSON}.tmp" && mv "${PLUGIN_JSON}.tmp" "$PLUGIN_JSON"
 
 # 2. Update marketplace.json (top-level metadata.version + plugins[].version)
-MARKETPLACE_JSON="${PROJECT_DIR:-.}/.claude-plugin/marketplace.json"
+MARKETPLACE_JSON="${PROJ_DIR:-.}/.claude-plugin/marketplace.json"
 if [ -f "$MARKETPLACE_JSON" ]; then
   jq --arg v "$NEW_VERSION" '
     .metadata.version = $v |
@@ -47,13 +55,14 @@ if [ -f "$MARKETPLACE_JSON" ]; then
 fi
 
 # 3. Update package.json
-PACKAGE_JSON="${PROJECT_DIR:-.}/package.json"
+PACKAGE_JSON="${PROJ_DIR:-.}/package.json"
 if [ -f "$PACKAGE_JSON" ]; then
   jq --arg v "$NEW_VERSION" '.version = $v' "$PACKAGE_JSON" > "${PACKAGE_JSON}.tmp" && mv "${PACKAGE_JSON}.tmp" "$PACKAGE_JSON"
 fi
 
 # Stage all updated version files
-(cd "$PROJECT_DIR" && git add .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json 2>/dev/null)
+(cd "$PROJ_DIR" && git add .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json 2>/dev/null)
 
+log "Version bumped: $CURRENT → $NEW_VERSION"
 echo "[bump-version] $CURRENT → $NEW_VERSION (synced plugin.json, marketplace.json, package.json)"
 exit 0

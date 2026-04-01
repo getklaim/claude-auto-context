@@ -1,17 +1,23 @@
 #!/bin/bash
-# Setup Hook — ensure Bun runtime is available
+# Setup Hook — ensure dependencies and clean stale context files
 # Runs once when plugin is first loaded
 
-# Check if bun is installed
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check/install bun
 if ! command -v bun &> /dev/null; then
-  # Auto-install Bun
   curl -fsSL https://bun.sh/install | bash 2>/dev/null
   export BUN_INSTALL="$HOME/.bun"
   export PATH="$BUN_INSTALL/bin:$PATH"
 fi
 
+# Warn if jq is missing (needed for bump-version.sh)
+if ! command -v jq &> /dev/null; then
+  echo "[auto-context] Warning: jq not found. Version auto-bump disabled."
+  echo "  Install: brew install jq (macOS) or apt install jq (Linux)"
+fi
+
 # Check if skill-creator is installed (SDEL-03)
-# Silent when present; shows guidance when missing
 if ! command -v skill-creator &> /dev/null; then
   echo "Auto Context: skill-creator not found — /cac-create-skill will not function."
   echo "  Install: https://github.com/anthropics/skills (sparse checkout skill-creator)"
@@ -29,5 +35,8 @@ if [ -f "$GITIGNORE" ]; then
 else
   echo "$ENTRY" > "$GITIGNORE"
 fi
+
+# Auto-cleanup stale rules and skills
+"$SCRIPT_DIR/auto-cleanup.sh" 2>/dev/null || true
 
 exit 0

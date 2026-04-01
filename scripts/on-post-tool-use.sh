@@ -1,9 +1,9 @@
 #!/bin/bash
 # PostToolUse Hook
-# Pipes raw JSON from stdin to collector. No filtering or analysis.
+# Pipes raw JSON from stdin to collector.
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+source "$(dirname "$0")/common.sh"
 
-cat | bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" PostToolUse
+cat | run_collector PostToolUse
 
 exit 0
