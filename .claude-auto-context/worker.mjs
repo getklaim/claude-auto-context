@@ -124,6 +124,12 @@ function compressPayload(toolName, payload) {
       case 'AskUserQuestion':
       case 'WebSearch':
         return null; // skip entirely
+      case 'Edit':
+        return `edit ${input.file_path || '(unknown)'} (${(input.old_string || '').length}→${(input.new_string || '').length} chars)`;
+      case 'Write':
+        return `write ${input.file_path || '(unknown)'} (${(input.content || '').length} chars)`;
+      case 'NotebookEdit':
+        return `notebook-edit ${input.notebook_path || '(unknown)'} cell#${input.cell_number ?? '?'}`;
       default:
         return undefined; // use original payload
     }
@@ -286,61 +292,65 @@ function buildRulesTopicIndex(root) {
   return out;
 }
 
-// --- Existing Context Summary (ORCH-02) ---
+// --- Per-Agent Context Builders (replaces monolithic buildExistingContextSummary) ---
 
-function buildExistingContextSummary(root) {
+function buildContextForAgent(root, domains) {
   let summary = `\n# Existing Project Context — Check before creating anything new\n`;
   summary += `Before creating any new artifact, check this list. If a similar one exists, SKIP or UPDATE it instead of duplicating.\n`;
 
-  // 1. Existing rules
-  const rulesDir = resolve(root, '.claude', 'rules');
-  const localRulesDir = resolve(root, '.claude', 'rules', 'local');
-  const ruleFiles = [];
-  if (existsSync(rulesDir)) {
-    for (const f of readdirSync(rulesDir).filter(f => f.endsWith('.md'))) {
-      ruleFiles.push(`committed/${f}`);
+  if (domains.includes('rules')) {
+    const rulesDir = resolve(root, '.claude', 'rules');
+    const localRulesDir = resolve(root, '.claude', 'rules', 'local');
+    const ruleFiles = [];
+    if (existsSync(rulesDir)) {
+      for (const f of readdirSync(rulesDir).filter(f => f.endsWith('.md'))) {
+        ruleFiles.push(`committed/${f}`);
+      }
     }
-  }
-  if (existsSync(localRulesDir)) {
-    for (const f of readdirSync(localRulesDir).filter(f => f.endsWith('.md'))) {
-      ruleFiles.push(`local/${f}`);
+    if (existsSync(localRulesDir)) {
+      for (const f of readdirSync(localRulesDir).filter(f => f.endsWith('.md'))) {
+        ruleFiles.push(`local/${f}`);
+      }
     }
+    summary += `\n## Rules (${ruleFiles.length} files)\n`;
+    for (const r of ruleFiles) summary += `- ${r}\n`;
   }
-  summary += `\n## Rules (${ruleFiles.length} files)\n`;
-  for (const r of ruleFiles) summary += `- ${r}\n`;
 
-  // 2. Existing skills
-  const skills = loadExistingSkills(root);
-  summary += `\n## Skills (${skills.length} dirs)\n`;
-  for (const s of skills) summary += `- ${s.file}: ${s.description || s.name}\n`;
-
-  // 3. Existing suggestions (filename + description field or title fallback)
-  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
-  const suggestions = [];
-  if (existsSync(suggestionsDir)) {
-    for (const f of readdirSync(suggestionsDir).filter(f => f.endsWith('.md'))) {
-      const content = readFileSync(resolve(suggestionsDir, f), 'utf8');
-      const descMatch = content.match(/^## Description\n(.+)/m);
-      const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
-      suggestions.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
-    }
+  if (domains.includes('skills')) {
+    const skills = loadExistingSkills(root);
+    summary += `\n## Skills (${skills.length} dirs)\n`;
+    for (const s of skills) summary += `- ${s.file}: ${s.description || s.name}\n`;
   }
-  summary += `\n## Open Suggestions (${suggestions.length} files)\n`;
-  for (const s of suggestions) summary += `- ${s.file}${s.description ? ': ' + s.description : ''}\n`;
 
-  // 4. Existing hooks (filename + Description: comment or title fallback)
-  const hooksDir = resolve(root, '.claude', 'hooks');
-  const hooks = [];
-  if (existsSync(hooksDir)) {
-    for (const f of readdirSync(hooksDir)) {
-      const content = readFileSync(resolve(hooksDir, f), 'utf8');
-      const descMatch = content.match(/^#\s*Description:\s*(.+)/m);
-      const titleMatch = content.match(/^#\s+\w+ hook:\s*(.+)/m);
-      hooks.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+  if (domains.includes('suggestions')) {
+    const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
+    const suggestions = [];
+    if (existsSync(suggestionsDir)) {
+      for (const f of readdirSync(suggestionsDir).filter(f => f.endsWith('.md'))) {
+        const content = readFileSync(resolve(suggestionsDir, f), 'utf8');
+        const descMatch = content.match(/^## Description\n(.+)/m);
+        const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
+        suggestions.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+      }
     }
+    summary += `\n## Open Suggestions (${suggestions.length} files)\n`;
+    for (const s of suggestions) summary += `- ${s.file}${s.description ? ': ' + s.description : ''}\n`;
   }
-  summary += `\n## Hooks (${hooks.length} files)\n`;
-  for (const h of hooks) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
+
+  if (domains.includes('hooks')) {
+    const hooksDir = resolve(root, '.claude', 'hooks');
+    const hooks = [];
+    if (existsSync(hooksDir)) {
+      for (const f of readdirSync(hooksDir)) {
+        const content = readFileSync(resolve(hooksDir, f), 'utf8');
+        const descMatch = content.match(/^#\s*Description:\s*(.+)/m);
+        const titleMatch = content.match(/^#\s+\w+ hook:\s*(.+)/m);
+        hooks.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+      }
+    }
+    summary += `\n## Hooks (${hooks.length} files)\n`;
+    for (const h of hooks) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
+  }
 
   return summary;
 }
@@ -353,27 +363,32 @@ function buildHygienePrompt(root) {
   const claudeMdPath = resolve(root, 'CLAUDE.md');
   const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
 
-  let committedRulesContent = '';
+  // Build lightweight topic index instead of full content embedding
+  let committedRulesIndex = '';
   if (existsSync(rulesDir)) {
     for (const entry of readdirSync(rulesDir).sort()) {
       if (!entry.endsWith('.md')) continue;
       const content = readFileSync(resolve(rulesDir, entry), 'utf8');
-      committedRulesContent += `\n### ${entry}\n\`\`\`\n${content}\n\`\`\`\n`;
+      const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+      const charCount = content.length;
+      committedRulesIndex += `- ${entry} (${charCount} chars)${descMatch ? ': ' + descMatch[1] : ''}\n`;
     }
   }
 
-  let localRulesContent = '';
+  let localRulesIndex = '';
   if (existsSync(localRulesDir)) {
     for (const entry of readdirSync(localRulesDir).sort()) {
       if (!entry.endsWith('.md')) continue;
       const content = readFileSync(resolve(localRulesDir, entry), 'utf8');
-      localRulesContent += `\n### ${entry}\n\`\`\`\n${content}\n\`\`\`\n`;
+      const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+      const charCount = content.length;
+      localRulesIndex += `- ${entry} (${charCount} chars)${descMatch ? ': ' + descMatch[1] : ''}\n`;
     }
   }
 
-  let claudeMd = '';
+  let claudeMdSize = 0;
   if (existsSync(claudeMdPath)) {
-    claudeMd = readFileSync(claudeMdPath, 'utf8');
+    claudeMdSize = readFileSync(claudeMdPath, 'utf8').length;
   }
 
   return `# Context Hygiene Check
@@ -392,15 +407,15 @@ context files (committed rules, local rules, and CLAUDE.md) for quality issues.
 ## Input: Current Context Files
 
 ### .claude/rules/ files (committed, READ-ONLY):
-${committedRulesContent || '(none)'}
+${committedRulesIndex || '(none)'}
 
 ### .claude/rules/local/ files (auto-generated):
-${localRulesContent || '(none)'}
+${localRulesIndex || '(none)'}
 
-### CLAUDE.md (READ-ONLY):
-\`\`\`
-${claudeMd || '(empty)'}
-\`\`\`
+### CLAUDE.md (READ-ONLY): ${claudeMdSize} chars
+Use the Read tool to inspect CLAUDE.md content when needed for contradiction/duplicate checks.
+
+**IMPORTANT**: File contents are NOT embedded to save tokens. Use the Read tool to read specific files when you need to compare content for duplicate/contradiction detection. Read only the files relevant to each check.
 
 ## Your 5-Point Checklist
 
@@ -494,54 +509,114 @@ pending
 - One suggestion file per issue. Do not combine multiple issues.`;
 }
 
+// --- Batch Cache for Conditional Execution ---
+
+function initBatchCache(db) {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS batch_cache (
+      key       TEXT PRIMARY KEY,
+      value     TEXT,
+      hash      TEXT,
+      updated   TEXT DEFAULT (datetime('now'))
+    )
+  `);
+}
+
+function getCacheEntry(db, key) {
+  return db.prepare(`SELECT value, hash FROM batch_cache WHERE key = ?`).get(key);
+}
+
+function setCacheEntry(db, key, value, hash) {
+  db.run(`
+    INSERT INTO batch_cache (key, value, hash, updated)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, hash=excluded.hash, updated=excluded.updated
+  `, [key, value, hash]);
+}
+
+function hashContent(content) {
+  const hasher = new Bun.CryptoHasher('md5');
+  hasher.update(content);
+  return hasher.digest('hex');
+}
+
+function computeRulesHash(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  const localRulesDir = resolve(root, '.claude', 'rules', 'local');
+  const claudeMdPath = resolve(root, 'CLAUDE.md');
+  let combined = '';
+
+  for (const dir of [rulesDir, localRulesDir]) {
+    if (existsSync(dir)) {
+      for (const f of readdirSync(dir).filter(f => f.endsWith('.md')).sort()) {
+        combined += readFileSync(resolve(dir, f), 'utf8');
+      }
+    }
+  }
+  if (existsSync(claudeMdPath)) {
+    combined += readFileSync(claudeMdPath, 'utf8');
+  }
+
+  return hashContent(combined);
+}
+
+function shouldRunAgent(agentName, events, db) {
+  switch (agentName) {
+    case 'hygiene-agent': {
+      const currentHash = computeRulesHash(projectRoot);
+      const cached = getCacheEntry(db, 'hygiene_hash');
+      if (cached && cached.hash === currentHash) {
+        log(`skip hygiene-agent: rules unchanged (hash=${currentHash.slice(0, 8)})`);
+        return false;
+      }
+      return true;
+    }
+    case 'hooks-agent': {
+      const hasMutations = events.some(e =>
+        ['Edit', 'Write', 'Bash', 'NotebookEdit'].includes(e.tool_name)
+      );
+      if (!hasMutations) {
+        log(`skip hooks-agent: no mutation events in batch`);
+        return false;
+      }
+      return true;
+    }
+    case 'suggestion-agent': {
+      const hasUserPrompts = events.some(e => e.hook_type === 'UserPromptSubmit');
+      if (!hasUserPrompts) {
+        log(`skip suggestion-agent: no UserPromptSubmit events`);
+        return false;
+      }
+      return true;
+    }
+    case 'skill-agent': {
+      if (events.length < 20) {
+        log(`skip skill-agent: only ${events.length} events (min 20)`);
+        return false;
+      }
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
+  initBatchCache(db);
+
   const { prompt: bulkPrompt, includedIds } = buildBulkPrompt(events);
   const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
-  const existingContextSummary = buildExistingContextSummary(projectRoot);
 
-  // ① Snapshot context files (full content) before orchestrator
-  const snapshotBefore = takeContentSnapshot(projectRoot);
+  // Build agents object conditionally — only include agents that pass shouldRunAgent
+  const agents = {};
 
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), AGENT_TIMEOUT_MS);
-
-  try {
-    const result = query({
-      prompt: `${bulkPrompt}
-You are an orchestrator. Analyze the above session data and delegate to ALL FIVE agents below.
-You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
-
-1. rules-agent — Repeated conventions
-   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
-   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.
-2. suggestion-agent — AI-unfriendly code patterns and structural issues
-   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.
-3. hooks-agent — Detect repetitive manual actions and generate hook configurations
-   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
-4. skill-agent — Detect repeated multi-step workflows and create SKILL.md files
-   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.
-5. hygiene-agent — Context quality audit
-   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.
-
-Call all five agents now.`,
-      options: {
-        model: 'sonnet',
-        cwd: projectRoot,
-        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Bash', 'Task'],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        abortController: ac,
-        maxTurns: 25,
-        maxBudgetUsd: 2.00,
-        persistSession: false,
-        settingSources: ['project'],
-        stderr: (data) => log(`[stderr] ${data}`),
-        agents: {
-          "rules-agent": {
-            description: "Extract implicit conventions from user corrections in session data. Creates .claude/rules/ files following Boris Cherny's 'institutional memory' pattern: past mistakes become permanent rules.",
-            prompt: `${existingContextSummary}
+  if (shouldRunAgent('rules-agent', events, db)) {
+    const rulesContext = buildContextForAgent(projectRoot, ['rules', 'skills']);
+    agents['rules-agent'] = {
+      description: "Extract implicit conventions from user corrections in session data. Creates .claude/rules/ files following Boris Cherny's 'institutional memory' pattern: past mistakes become permanent rules.",
+      prompt: `${rulesContext}
 
 ## Conservative Behavior (ORCH-03)
 Before creating any new rule, check the context summary above.
@@ -582,13 +657,17 @@ ${rulesTopicIndex}
 ## Description maintenance
 Rules listed "Without description — local": Read and add description: field.
 Rules listed "Without description — committed": Read for context, do NOT modify.`,
-            tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
-            skills: ['extract-rules'],
-            maxTurns: 15,
-          },
-          "suggestion-agent": {
-            description: "Detect AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/ with related file lists and quantitative evidence.",
-            prompt: `${existingContextSummary}
+      tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
+      skills: ['extract-rules'],
+      maxTurns: 15,
+    };
+  }
+
+  if (shouldRunAgent('suggestion-agent', events, db)) {
+    const suggestionContext = buildContextForAgent(projectRoot, ['suggestions', 'rules']);
+    agents['suggestion-agent'] = {
+      description: "Detect AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/ with related file lists and quantitative evidence.",
+      prompt: `${suggestionContext}
 
 ## Conservative Behavior (ORCH-03)
 Before creating any new rule, suggestion, hook, or skill, check the context summary above.
@@ -650,13 +729,17 @@ pending
 - Maximum 2 suggestions per batch to avoid noise. The quality gate will reject suggestions beyond 10 total pending.
 - Only create suggestions with strong quantitative evidence (3+ occurrences)
 - If the quality gate rejects your suggestion as a duplicate, that is correct behavior — do not retry`,
-            tools: ['Read', 'Write', 'Glob', 'Bash'],
-            skills: ['create-suggestion'],
-            maxTurns: 20,
-          },
-          "hooks-agent": {
-            description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
-            prompt: `${existingContextSummary}
+      tools: ['Read', 'Write', 'Glob', 'Bash'],
+      skills: ['create-suggestion'],
+      maxTurns: 20,
+    };
+  }
+
+  if (shouldRunAgent('hooks-agent', events, db)) {
+    const hooksContext = buildContextForAgent(projectRoot, ['hooks']);
+    agents['hooks-agent'] = {
+      description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
+      prompt: `${hooksContext}
 
 ## Conservative Behavior (ORCH-03)
 Before creating any new rule, suggestion, hook, or skill, check the context summary above.
@@ -698,12 +781,16 @@ The \`# Description:\` line is mandatory. It is parsed by the orchestrator for c
 - All PostToolUse/Stop hooks must include CAC_HOOK_RUNNING re-entry guard
 - Hook scripts must use static command strings only (no dynamic session data injection)
 - Maximum 1 hook per batch to avoid hook accumulation`,
-            tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
-            maxTurns: 20,
-          },
-          "skill-agent": {
-            description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
-            prompt: `${existingContextSummary}
+      tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
+      maxTurns: 20,
+    };
+  }
+
+  if (shouldRunAgent('skill-agent', events, db)) {
+    const skillContext = buildContextForAgent(projectRoot, ['skills']);
+    agents['skill-agent'] = {
+      description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
+      prompt: `${skillContext}
 
 ## Conservative Behavior (ORCH-03)
 Before creating any new rule, suggestion, hook, or skill, check the context summary above.
@@ -774,24 +861,69 @@ Check the "Skills" section in the context summary above. Do NOT create a skill t
 - Maximum 1 skill per batch. Pick the strongest candidate.
 - If no candidate passes the Necessity Gate, create nothing. Most sessions will NOT yield a skill.
 - Use concrete tool names and file patterns from the session data, not generic placeholders.`,
-            tools: ['Read', 'Write', 'Glob', 'Bash'],
-            maxTurns: 20,
-          },
-          "hygiene-agent": {
-            description: "Context quality auditor. Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.",
-            prompt: `${existingContextSummary}
+      tools: ['Read', 'Write', 'Glob', 'Bash'],
+      maxTurns: 20,
+    };
+  }
 
-## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
-If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
-Log "skipped — already exists: {name}" when you skip.
+  if (shouldRunAgent('hygiene-agent', events, db)) {
+    agents['hygiene-agent'] = {
+      description: "Context quality auditor. Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.",
+      prompt: `${buildHygienePrompt(projectRoot)}`,
+      tools: ['Read', 'Write', 'Glob', 'Bash'],
+      skills: ['context-hygiene'],
+      maxTurns: 15,
+    };
+  }
 
-${buildHygienePrompt(projectRoot)}`,
-            tools: ['Read', 'Write', 'Glob', 'Bash'],
-            skills: ['context-hygiene'],
-            maxTurns: 15,
-          },
-        },
+  // If no agents to run, skip the entire query() call
+  if (Object.keys(agents).length === 0) {
+    log('skip batch: no agents need to run');
+    return includedIds;
+  }
+
+  // Build dynamic orchestrator prompt based on active agents
+  const agentDescriptions = [];
+  let idx = 1;
+  if (agents['rules-agent']) agentDescriptions.push(`${idx++}. rules-agent — Repeated conventions\n   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.\n   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.`);
+  if (agents['suggestion-agent']) agentDescriptions.push(`${idx++}. suggestion-agent — AI-unfriendly code patterns and structural issues\n   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.`);
+  if (agents['hooks-agent']) agentDescriptions.push(`${idx++}. hooks-agent — Detect repetitive manual actions and generate hook configurations\n   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.`);
+  if (agents['skill-agent']) agentDescriptions.push(`${idx++}. skill-agent — Detect repeated multi-step workflows and create SKILL.md files\n   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.`);
+  if (agents['hygiene-agent']) agentDescriptions.push(`${idx++}. hygiene-agent — Context quality audit\n   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.`);
+
+  const agentCount = Object.keys(agents).length;
+  const orchestratorPrompt = `${bulkPrompt}
+You are an orchestrator. Analyze the above session data and delegate to ALL ${agentCount} agents below.
+You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
+
+${agentDescriptions.join('\n')}
+
+Call all ${agentCount} agents now.`;
+
+  log(`batch: running ${agentCount} agents: ${Object.keys(agents).join(', ')}`);
+
+  // ① Snapshot context files (full content) before orchestrator
+  const snapshotBefore = takeContentSnapshot(projectRoot);
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), AGENT_TIMEOUT_MS);
+
+  try {
+    const result = query({
+      prompt: orchestratorPrompt,
+      options: {
+        model: 'sonnet',
+        cwd: projectRoot,
+        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Bash', 'Task'],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        abortController: ac,
+        maxTurns: 25,
+        maxBudgetUsd: 2.00,
+        persistSession: false,
+        settingSources: ['project'],
+        stderr: (data) => log(`[stderr] ${data}`),
+        agents,
       }
     });
 
@@ -804,6 +936,9 @@ ${buildHygienePrompt(projectRoot)}`,
         }
       }
     }
+
+    // Update hygiene hash cache after successful batch
+    setCacheEntry(db, 'hygiene_hash', '', computeRulesHash(projectRoot));
   } finally {
     clearTimeout(timer);
   }
