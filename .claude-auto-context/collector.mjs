@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // collector.mjs — Hook to SQLite relay
-// Parses raw JSON from stdin and inserts into SQLite.
-// No analysis, no summarization. Just store.
+// Parses raw JSON from stdin, compresses PostToolUse payloads at ingestion,
+// and inserts into SQLite. UserPromptSubmit payloads are stored uncompressed
+// to preserve user intent. Stop events are skipped entirely.
 // Uses bun:sqlite — zero native dependencies.
 
 import { Database } from 'bun:sqlite';
@@ -12,6 +13,51 @@ const hookType = process.argv[2]; // 'PostToolUse' | 'Stop' | 'SessionStart' | '
 
 if (!hookType) {
   process.exit(1);
+}
+
+// Skip Stop events — they only contain last_assistant_message which is never used
+if (hookType === 'Stop') {
+  process.exit(0);
+}
+
+// --- Payload compression (mirrors worker.mjs compressPayload) ---
+// Strips tool_response (stdout, file contents, grep matches) at ingestion time.
+// Only keeps what the worker actually uses: tool name + input metadata.
+function compressPostToolUse(payload) {
+  const toolName = payload.tool_name;
+  const input = payload.tool_input || {};
+
+  switch (toolName) {
+    case 'Read':
+      return JSON.stringify({ tool_name: toolName, file_path: input.file_path || '(unknown)' });
+    case 'Bash':
+      return JSON.stringify({ tool_name: toolName, command: input.command || '(unknown)' });
+    case 'Grep':
+      return JSON.stringify({ tool_name: toolName, pattern: input.pattern || '', path: input.path || '.' });
+    case 'Glob':
+      return JSON.stringify({ tool_name: toolName, pattern: input.pattern || '' });
+    case 'WebFetch':
+      return JSON.stringify({ tool_name: toolName, url: input.url || '(unknown)' });
+    case 'Agent':
+    case 'Task':
+    case 'TaskCreate':
+    case 'TaskUpdate':
+    case 'TaskGet':
+    case 'AskUserQuestion':
+    case 'WebSearch':
+      return null; // skip entirely — not used by worker
+    case 'Write':
+    case 'Edit':
+      // Keep file_path + truncated content (what was changed matters for rules-agent)
+      return JSON.stringify({
+        tool_name: toolName,
+        file_path: input.file_path || '(unknown)',
+        content_preview: (input.content || input.new_string || '').slice(0, 500),
+      });
+    default:
+      // Unknown tools: keep full payload but cap at 2000 chars
+      return JSON.stringify(payload).slice(0, 2000);
+  }
 }
 
 // DB path: .claude-auto-context/db/ inside the project that uses this plugin
@@ -58,6 +104,25 @@ process.stdin.on('end', () => {
     db.run(`CREATE INDEX IF NOT EXISTS idx_raw_events_status ON raw_events(status)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_raw_events_session ON raw_events(session_id)`);
 
+    // Determine stored payload based on hook type
+    let storedPayload;
+    if (hookType === 'UserPromptSubmit') {
+      // User prompts: store full payload — intent must be preserved
+      storedPayload = JSON.stringify(payload);
+    } else if (hookType === 'PostToolUse') {
+      // Tool events: compress at ingestion — strip tool_response
+      const compressed = compressPostToolUse(payload);
+      if (compressed === null) {
+        // Skip this event entirely (Agent, Task, etc.)
+        db.close();
+        process.exit(0);
+      }
+      storedPayload = compressed;
+    } else {
+      // Other hook types: store as-is with 2000 char cap
+      storedPayload = JSON.stringify(payload).slice(0, 2000);
+    }
+
     const stmt = db.prepare(`
       INSERT INTO raw_events (session_id, timestamp, hook_type, tool_name, payload)
       VALUES (?, datetime('now'), ?, ?, ?)
@@ -67,7 +132,7 @@ process.stdin.on('end', () => {
       payload.session_id ?? 'unknown',
       hookType,
       payload.tool_name ?? null,
-      JSON.stringify(payload)
+      storedPayload
     );
 
     db.close();
