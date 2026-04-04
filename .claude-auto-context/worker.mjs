@@ -328,6 +328,20 @@ function buildExistingContextSummary(root) {
   summary += `\n## Open Suggestions (${suggestions.length} files)\n`;
   for (const s of suggestions) summary += `- ${s.file}${s.description ? ': ' + s.description : ''}\n`;
 
+  // 3b. Existing hygiene findings (filename + description field or title fallback)
+  const hygieneDir = resolve(root, '.claude-auto-context', 'hygiene');
+  const hygieneFiles = [];
+  if (existsSync(hygieneDir)) {
+    for (const f of readdirSync(hygieneDir).filter(f => f.endsWith('.md'))) {
+      const content = readFileSync(resolve(hygieneDir, f), 'utf8');
+      const descMatch = content.match(/^## Description\n(.+)/m);
+      const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
+      hygieneFiles.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+    }
+  }
+  summary += `\n## Hygiene Issues (${hygieneFiles.length} files)\n`;
+  for (const h of hygieneFiles) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
+
   // 4. Existing hooks (filename + Description: comment or title fallback)
   const hooksDir = resolve(root, '.claude', 'hooks');
   const hooks = [];
