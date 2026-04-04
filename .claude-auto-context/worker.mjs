@@ -560,12 +560,17 @@ Use absolute paths. NEVER write to ~/.claude/ or any path outside the project.
 \`\`\`
 ---
 description: "One-line summary of what this rule prevents"
+globs: ["**/*.ts", "src/**"]     # OPTIONAL — omit for project-wide rules
 ---
 
 [Rule body — under 200 chars. Specific trigger → specific action.]
 \`\`\`
-Files WITHOUT the \`---\` frontmatter block and \`description:\` field are INVALID.
-Add \`globs:\` only when the rule applies to specific file patterns.
+
+FRONTMATTER RULES:
+- \`description:\` is REQUIRED in every file.
+- \`globs:\` is OPTIONAL. Use it only for file-pattern-specific rules. Omit entirely for project-wide rules.
+- NEVER use \`paths:\` — it silently applies the rule to ALL files regardless of the value. Always use \`globs:\`.
+- Files missing the \`---\` block or \`description:\` field are INVALID and will be rejected by the quality gate.
 
 ## Conservative Behavior (ORCH-03)
 Before creating any new rule, check the context summary above.
@@ -598,7 +603,9 @@ For every candidate: "Would removing this rule cause Claude to make mistakes?"
 - BAD: 500 chars explaining Result type history
 - GOOD: "Error handling: Result<T,E>, not try-catch. Return {ok, error} shape."
 
-If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
+If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash:
+printf '%s' "content" > ${projectRoot}/.claude/rules/local/rule-name.md
+NEVER use ~ or $HOME in the path. The absolute path above is the ONLY correct target.
 
 Follow the extract-rules skill instructions for output format and procedure.
 ${rulesTopicIndex}
@@ -715,7 +722,9 @@ Every hook script MUST start with this exact header pattern:
 The \`# Description:\` line is mandatory. It is parsed by the orchestrator for context summaries.
 
 ## Output rules
-- If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
+- If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash:
+  printf '%s' "content" > ${projectRoot}/.claude/hooks/hook-name.sh
+  NEVER use ~ or $HOME in the path. The absolute path above is the ONLY correct target.
 - Write hook scripts to target project's .claude/hooks/ directory
 - Update target project's .claude/settings.json (read -> parse -> merge -> write)
 - NEVER modify the plugin's hooks/hooks.json
@@ -759,7 +768,9 @@ If a candidate fails: log "SKIP: {pattern} — {reason}" and create nothing.
 
 ## Output: SKILL.md Format (SKIL-03)
 
-If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
+If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash:
+printf '%s' "content" > ${projectRoot}/.claude/skills/skill-name/SKILL.md
+NEVER use ~ or $HOME in the path. The absolute path above is the ONLY correct target.
 
 Create SKILL.md in the target project's .claude/skills/ directory only:
 - \`.claude/skills/{skill-name}/SKILL.md\`
