@@ -8,6 +8,8 @@ source "$(dirname "$0")/common.sh"
 
 SUGGESTIONS_DIR="$PROJECT_DIR/.claude-auto-context/suggestions"
 CACHE_FILE="$PROJECT_DIR/.claude-auto-context/.suggestions-cache"
+HYGIENE_DIR="$PROJECT_DIR/.claude-auto-context/hygiene"
+HYGIENE_CACHE="$PROJECT_DIR/.claude-auto-context/.hygiene-cache"
 
 # stdin is consumed once — capture it first, then pipe to collector
 INPUT=$(cat)
@@ -71,6 +73,52 @@ if [ -f "$CACHE_FILE" ]; then
     echo "Auto Context — ${COUNT}건의 Suggestion 대기 중"
     echo "─────────────────────────────────────────────────"
     tail -n +2 "$CACHE_FILE"
+    echo "/cac-apply 로 적용"
+    echo "─────────────────────────────────────────────────"
+  fi
+fi
+
+# Check if hygiene cache needs refresh
+needs_hygiene_refresh() {
+  [ ! -f "$HYGIENE_CACHE" ] && return 0
+  [ ! -d "$HYGIENE_DIR" ] && return 1
+  if [ "$(stat -f %m "$HYGIENE_DIR" 2>/dev/null || stat -c %Y "$HYGIENE_DIR" 2>/dev/null)" -gt \
+       "$(stat -f %m "$HYGIENE_CACHE" 2>/dev/null || stat -c %Y "$HYGIENE_CACHE" 2>/dev/null)" ]; then
+    return 0
+  fi
+  return 1
+}
+
+build_hygiene_cache() {
+  [ ! -d "$HYGIENE_DIR" ] && echo "0" > "$HYGIENE_CACHE" && return
+  local count=0
+  local output=""
+  for f in "$HYGIENE_DIR"/*.md; do
+    [ -f "$f" ] || continue
+    grep -q "^applied$" "$f" 2>/dev/null && continue
+    grep -q "^rejected$" "$f" 2>/dev/null && continue
+    grep -q "^failed$" "$f" 2>/dev/null && continue
+    TITLE=$(grep -m1 "^# " "$f" | sed 's/^# //')
+    [ -z "$TITLE" ] && continue
+    ID=$(basename "$f" .md | grep -oE '^[0-9]{8}-[0-9]{6}' || basename "$f" .md | grep -oE 'hygiene-[0-9]{8}-[0-9]{6}' || basename "$f" .md)
+    output+="  [$ID] $TITLE\n"
+    ((count++))
+  done
+  echo "$count" > "$HYGIENE_CACHE"
+  [ -n "$output" ] && echo -e "$output" >> "$HYGIENE_CACHE"
+}
+
+if needs_hygiene_refresh; then
+  build_hygiene_cache
+fi
+
+if [ -f "$HYGIENE_CACHE" ]; then
+  HCOUNT=$(head -1 "$HYGIENE_CACHE")
+  if [ "$HCOUNT" -gt 0 ] 2>/dev/null; then
+    echo "─────────────────────────────────────────────────"
+    echo "Auto Context — ${HCOUNT}건의 Hygiene Issue 대기 중"
+    echo "─────────────────────────────────────────────────"
+    tail -n +2 "$HYGIENE_CACHE"
     echo "/cac-apply 로 적용"
     echo "─────────────────────────────────────────────────"
   fi
