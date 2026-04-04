@@ -28,6 +28,9 @@ Create files in `.claude-auto-context/suggestions/` as `suggestion-YYYYMMDD-HHMM
 ```markdown
 # Suggestion: {title}
 
+## Description
+{one-line summary — used for deduplication and context display}
+
 ## Status
 pending
 
@@ -35,16 +38,30 @@ pending
 {ISO 8601 UTC timestamp, e.g. 2026-03-27T14:30:52Z}
 
 ## Category
-structure | pattern | organization
+{ai-unfriendly-large-file | ai-unfriendly-naming | ai-unfriendly-missing-docs | ai-unfriendly-structure | ai-unfriendly-fragile}
 
 ## Problem
-{Description with quantitative evidence}
+{Description with quantitative evidence and specific file names}
+
+## Related Files
+- {file1.ext} — {why this file is involved}
+- {file2.ext} — {why this file is involved}
 
 ## Proposal
-{Specific changes to make}
+
+### Files to modify
+- {file1.ext} — {what changes in this file}
+- {file2.ext} — {what changes in this file (use "new file" for creation)}
+
+### Changes
+1. {In file1.ext: specific change description with enough detail to execute without ambiguity}
+2. {In file2.ext: specific change description}
+
+### Acceptance criteria
+- [ ] {verifiable condition — e.g., "file2.ext exists and exports functionName"}
+- [ ] {verifiable condition — e.g., "file1.ext imports from file2.ext"}
 
 ## Evidence Sessions
-- session_{id} ({date}): {what was observed}
 - session_{id} ({date}): {what was observed}
 
 ## Metrics
@@ -52,6 +69,8 @@ structure | pattern | organization
 - Sessions affected: {N}/{total}
 - Estimated impact: {description}
 ```
+
+**IMPORTANT**: The `## Proposal` section MUST contain all three subsections (`### Files to modify`, `### Changes`, `### Acceptance criteria`). Proposals without these subsections are incomplete and will be rejected.
 
 ## Procedure
 
