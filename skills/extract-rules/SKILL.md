@@ -58,7 +58,7 @@ Session "Tool Activity" is secondary — use it to verify patterns, not as prima
 ```markdown
 ---
 description: "One-line summary — used for dedup and context display"
-globs:
+paths:
   - "src/auth/**"
 created: "2026-03-30"
 last_validated: "2026-03-30"
@@ -85,12 +85,12 @@ last_validated: "2026-03-30"
    c. Verify not already a hook or in CLAUDE.md
 4. Write to `.claude/rules/local/` with required `description:` in frontmatter
 5. Scope narrowly: prefer `src/auth/**` over `**`
-6. Project-wide knowledge: omit `globs:` — applies globally
+6. Project-wide knowledge: omit `paths:` — applies globally
 
 ## Global vs Scoped Rules
 
-- **Scoped** (`globs:` present): file/directory-specific conventions
-- **Global** (no `globs:`): project-wide prohibitions, non-obvious commands, safety rails
+- **Scoped** (`paths:` present): file/directory-specific conventions
+- **Global** (no `paths:`): project-wide prohibitions, non-obvious commands, safety rails
 - Global rules replace CLAUDE.md additions for tacit knowledge
 - When in doubt, scope narrowly — a rule that fires for irrelevant files is noise
 

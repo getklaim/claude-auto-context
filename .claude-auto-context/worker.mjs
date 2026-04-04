@@ -497,7 +497,7 @@ Rule B says "use Result type, no try-catch" for src/**/*.ts.
 - Output category: \`hygiene-contradiction\`
 
 ### H-03: Stale Reference Detection
-For each rules file with globs patterns in frontmatter,
+For each rules file with paths patterns in frontmatter,
 use the Glob tool to verify matching files exist in the codebase.
 If a glob matches 0 files, that rule is stale.
 - Output category: \`hygiene-stale\`
@@ -958,7 +958,7 @@ ${skillContext}`,
   // Build dynamic orchestrator prompt based on active agents
   const agentDescriptions = [];
   let idx = 1;
-  if (agents['rules-agent']) agentDescriptions.push(`${idx++}. rules-agent — Repeated conventions\n   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.\n   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.`);
+  if (agents['rules-agent']) agentDescriptions.push(`${idx++}. rules-agent — Repeated conventions\n   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.\n   Note: rules-agent now writes to .claude/rules/local/. Rules without paths: frontmatter apply project-wide.`);
   if (agents['suggestion-agent']) agentDescriptions.push(`${idx++}. suggestion-agent — AI-unfriendly code patterns and structural issues\n   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.`);
   if (agents['hooks-agent']) agentDescriptions.push(`${idx++}. hooks-agent — Detect repetitive manual actions and generate hook configurations\n   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.`);
   if (agents['skill-agent']) agentDescriptions.push(`${idx++}. skill-agent — Detect repeated multi-step workflows and create SKILL.md files\n   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.`);

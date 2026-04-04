@@ -79,14 +79,14 @@ function checkFrontmatterKey(content) {
   const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
   if (!fmMatch) return { id: 'Q-02', name: 'frontmatter-key', severity: 'critical',
     passed: true, detail: 'No frontmatter' };
-  if (/^paths:/m.test(fmMatch[1]) && !/^globs:/m.test(fmMatch[1])) {
+  if (/^globs:/m.test(fmMatch[1]) && !/^paths:/m.test(fmMatch[1])) {
     return { id: 'Q-02', name: 'frontmatter-key', severity: 'critical',
-      passed: false, detail: '"paths:" used instead of "globs:" — applies rule to ALL files',
+      passed: false, detail: '"globs:" used instead of "paths:" — unrecognized key causes rule to load unconditionally',
       autoFix: (c) => c.replace(/^---\n([\s\S]*?)\n---/, (_, yaml) =>
-        `---\n${yaml.replace(/^paths:/m, 'globs:')}\n---`) };
+        `---\n${yaml.replace(/^globs:/m, 'paths:')}\n---`) };
   }
   return { id: 'Q-02', name: 'frontmatter-key', severity: 'critical',
-    passed: true, detail: 'Correct key: globs' };
+    passed: true, detail: 'Correct key: paths' };
 }
 
 function checkGlobsMatchFiles(content, projectRoot) {

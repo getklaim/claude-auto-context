@@ -15,7 +15,7 @@
 - `worker.mjs` uses Bun-specific built-ins (`bun:sqlite`); syntax is verified by `bun --check` via PostToolUse hook (`bun-check-after-mjs-edit.sh`) — do NOT call `bun --check` manually via Bash tool (hook runs in ~50ms; Bash tool adds ~2min approval overhead)
 
 ## Rules Files
-- Frontmatter key is `globs:` (NOT `paths:`) — using `paths:` silently applies the rule to ALL files, not matched paths
+- Frontmatter key is `paths:` (NOT `globs:`) — using an unrecognized key like `globs:` causes the rule to load unconditionally for ALL files
 
 ## External Documentation
 - Claude Code docs: `https://code.claude.com/docs/en/` (NOT `docs.anthropic.com`)
