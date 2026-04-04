@@ -876,6 +876,20 @@ ${buildHygienePrompt(projectRoot)}`,
             r.reverted ? 1 : 0);
         }
       })();
+
+      // Write notifications manifest for SessionStart hook
+      const created = gate.results
+        .filter(r => r.action === 'created' && r.verdict === 'pass' && !r.reverted)
+        .map(r => relative(projectRoot, r.filePath));
+      if (created.length > 0) {
+        const notifPath = resolve(projectRoot, '.claude-auto-context', 'notifications.json');
+        try {
+          writeFileSync(notifPath, JSON.stringify({ created, ts: new Date().toISOString() }, null, 2));
+          log(`notifications: ${created.length} new file(s) written to notifications.json`);
+        } catch (err) {
+          log(`notifications: failed to write notifications.json — ${err.message}`);
+        }
+      }
     }
   } catch (err) {
     log(`quality-gate: failed (non-fatal): ${err.message}`);
