@@ -7,6 +7,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 DB_PATH="$PROJECT_DIR/.claude-auto-context/db/claude-auto-context.db"
 RULES_DIR="$PROJECT_DIR/.claude/rules/local"
 SUGGESTIONS_DIR="$PROJECT_DIR/.claude-auto-context/suggestions"
+HYGIENE_DIR="$PROJECT_DIR/.claude-auto-context/hygiene"
 HOOKS_DIR="$PROJECT_DIR/.claude/hooks"
 NOTIF_PATH="$PROJECT_DIR/.claude-auto-context/notifications.json"
 
@@ -34,6 +35,18 @@ if [ -d "$SUGGESTIONS_DIR" ]; then
   done
 fi
 
+# Count pending hygiene issues
+HYGIENE_COUNT=0
+if [ -d "$HYGIENE_DIR" ]; then
+  for f in "$HYGIENE_DIR"/*.md; do
+    [ -f "$f" ] || continue
+    grep -q "^applied$" "$f" 2>/dev/null && continue
+    grep -q "^rejected$" "$f" 2>/dev/null && continue
+    grep -q "^failed$" "$f" 2>/dev/null && continue
+    HYGIENE_COUNT=$((HYGIENE_COUNT + 1))
+  done
+fi
+
 # DB stats
 TOTAL_ANALYZED=0
 LAST_WORKER=""
@@ -46,7 +59,7 @@ if [ -f "$DB_PATH" ]; then
 fi
 
 # Build dashboard text
-DASHBOARD="Auto Context: Rules ${RULES_COUNT} | Hooks ${HOOKS_COUNT} | Suggestions ${SUGGESTIONS_COUNT} pending"
+DASHBOARD="Auto Context: Rules ${RULES_COUNT} | Hooks ${HOOKS_COUNT} | Suggestions ${SUGGESTIONS_COUNT} pending | Hygiene ${HYGIENE_COUNT} pending"
 if [ "$TOTAL_ANALYZED" -gt 0 ]; then
   DASHBOARD="${DASHBOARD} | Events analyzed: ${TOTAL_ANALYZED}"
 fi
@@ -79,7 +92,7 @@ if [ -f "$NOTIF_PATH" ]; then
 fi
 
 # Only output if there's something to report
-if [ "$RULES_COUNT" -gt 0 ] || [ "$SUGGESTIONS_COUNT" -gt 0 ] || [ "$TOTAL_ANALYZED" -gt 0 ] || [ -n "$NOTIF_TEXT" ]; then
+if [ "$RULES_COUNT" -gt 0 ] || [ "$SUGGESTIONS_COUNT" -gt 0 ] || [ "$HYGIENE_COUNT" -gt 0 ] || [ "$TOTAL_ANALYZED" -gt 0 ] || [ -n "$NOTIF_TEXT" ]; then
   CONTEXT="${DASHBOARD}${NOTIF_TEXT}"
   # Escape for JSON string: backslashes, quotes, newlines
   CONTEXT_ESCAPED=$(printf '%s' "$CONTEXT" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
