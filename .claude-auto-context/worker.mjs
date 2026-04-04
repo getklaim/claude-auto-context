@@ -36,6 +36,64 @@ function log(msg) {
   try { appendFileSync(logPath, line); } catch {}
 }
 
+// --- Convention Decay ---
+
+const DECAY_THRESHOLD_DAYS = 30;  // revalidate after 30 days
+const DECAY_FORCE_DAYS = 60;      // force-delete after 60 days (safety net)
+
+function getStaleRules(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  if (!existsSync(rulesDir)) return [];
+
+  const today = new Date();
+  const stale = [];
+
+  for (const entry of readdirSync(rulesDir)) {
+    if (!entry.endsWith('.md')) continue;
+    const fullPath = resolve(rulesDir, entry);
+    const content = readFileSync(fullPath, 'utf8');
+
+    // Extract last_validated from frontmatter
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!fmMatch) continue;
+
+    const lvMatch = fmMatch[1].match(/^last_validated:\s*"?(\d{4}-\d{2}-\d{2})"?/m);
+    if (!lvMatch) continue;
+
+    const lastValidated = new Date(lvMatch[1]);
+    const daysSince = Math.floor((today - lastValidated) / (1000 * 60 * 60 * 24));
+
+    if (daysSince >= DECAY_FORCE_DAYS) {
+      // Too old, force delete
+      unlinkSync(fullPath);
+      log(`decay: force-deleted ${entry} (${daysSince} days since last validation)`);
+    } else if (daysSince >= DECAY_THRESHOLD_DAYS) {
+      stale.push({ file: entry, path: fullPath, content, daysSince });
+    }
+  }
+
+  return stale;
+}
+
+function buildDecayPrompt(staleRules) {
+  let prompt = `# Convention Decay Check
+
+You are a rules validator. For each rule below, determine if it is still relevant
+to the current codebase. Use the Glob and Read tools to verify.
+
+For each rule:
+- If STILL VALID: update only the \`last_validated\` field in frontmatter to today's date (${new Date().toISOString().split('T')[0]})
+- If NO LONGER RELEVANT: delete the file entirely
+
+## Rules to Validate
+
+`;
+  for (const r of staleRules) {
+    prompt += `### ${r.file} (${r.daysSince} days since last validation)\n\`\`\`\n${r.content}\n\`\`\`\n\n`;
+  }
+  return prompt;
+}
+
 // --- Queue Operations ---
 
 function selfHeal(db, forceAll = false) {
@@ -808,7 +866,48 @@ ${buildHygienePrompt(projectRoot)}`,
     clearTimeout(timer);
   }
 
-  // ② Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
+  // ② Convention Decay — revalidate stale rules
+  const staleRules = getStaleRules(projectRoot);
+  if (staleRules.length > 0) {
+    log(`decay: ${staleRules.length} rules need revalidation`);
+
+    const decayAc = new AbortController();
+    const decayTimer = setTimeout(() => decayAc.abort(), AGENT_TIMEOUT_MS);
+
+    try {
+      const decayPrompt = buildDecayPrompt(staleRules);
+      const decayResult = query({
+        prompt: decayPrompt,
+        options: {
+          model: 'sonnet',
+          cwd: projectRoot,
+          allowedTools: ['Read', 'Edit', 'Glob', 'Bash'],
+          permissionMode: 'bypassPermissions',
+          allowDangerouslySkipPermissions: true,
+          abortController: decayAc,
+          maxTurns: 10,
+          maxBudgetUsd: 0.50,
+          persistSession: false,
+          settingSources: ['project'],
+          stderr: (data) => log(`[decay-stderr] ${data}`),
+        }
+      });
+
+      for await (const message of decayResult) {
+        if (message.type === 'result') {
+          log(`decay ${message.subtype}: ${message.result?.slice(0, 200) ?? ''}`);
+        }
+      }
+    } catch (err) {
+      log(`decay: failed (non-fatal): ${err.message}`);
+    } finally {
+      clearTimeout(decayTimer);
+    }
+  } else {
+    log('decay: no stale rules found');
+  }
+
+  // ③ Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
   // Runs independently from batch confirmation so a gate failure does not
   // trigger an expensive re-processing of the entire LLM batch.
   try {

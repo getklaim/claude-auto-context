@@ -1,6 +1,9 @@
-#!/usr/bin/env zsh
+#!/bin/bash
 # Auto-cleanup stale rules and skills
-# Runs silently on session start via Setup hook
+# Runs on session start via Setup hook
+# 1. Convention decay: force-deletes rules with last_validated older than 60 days
+# 2. Stale glob cleanup: deletes rules whose globs match 0 files
+# 3. Skills cleanup: warns about missing frontmatter, deletes only if stale: true
 
 set -euo pipefail
 
@@ -8,47 +11,35 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 RULES_DIR="$PROJECT_DIR/.claude/rules"
 SKILLS_DIR="$PROJECT_DIR/.claude/skills"
 ROOT_SKILLS_DIR="$PROJECT_DIR/skills"
+FORCE_DAYS=60
 
-# --- Rules Cleanup ---
-# Delete rules with globs that match 0 files (stale references)
-# Rules without globs are project-wide rules — keep them
+# --- Convention Decay ---
+# Force-delete rules with last_validated older than FORCE_DAYS
 
-cleanup_rules() {
+cleanup_decay() {
   [[ -d "$RULES_DIR" ]] || return 0
 
-  for rule_file in "$RULES_DIR"/*.md; do
+  today_epoch=$(date +%s)
+
+  for rule_file in "$RULES_DIR"/*.md "$RULES_DIR"/local/*.md; do
     [[ -f "$rule_file" ]] || continue
 
-    # Extract frontmatter (between first two ---)
-    frontmatter=$(awk '/^---$/{p=!p; if(!p) exit; next} p' "$rule_file")
+    # Extract last_validated from frontmatter
+    lv=$(awk '/^---$/{p=!p; if(!p) exit; next} p && /^last_validated:/' "$rule_file" \
+      | sed 's/^last_validated:[[:space:]]*["]*\([0-9-]*\)["]*$/\1/' || true)
 
-    # Extract globs value
-    globs=$(echo "$frontmatter" | grep '^globs:' | sed 's/^globs:[[:space:]]*["'"'"']\{0,1\}\([^"'"'"']*\)["'"'"']\{0,1\}/\1/' || true)
+    # Skip rules without last_validated (legacy or project-wide)
+    [[ -z "$lv" ]] && continue
 
-    if [[ -z "$globs" ]]; then
-      # No globs = project-wide rule, keep it
-      continue
-    fi
+    # Calculate days since last validation
+    lv_epoch=$(date -j -f "%Y-%m-%d" "$lv" +%s 2>/dev/null || date -d "$lv" +%s 2>/dev/null || echo "0")
+    [[ "$lv_epoch" -eq 0 ]] && continue
 
-    # Check if globs match any files (handle comma-separated globs)
-    IFS=',' read -rA glob_patterns <<< "$globs"
-    found=0
+    days_since=$(( (today_epoch - lv_epoch) / 86400 ))
 
-    # Enable recursive globbing and empty-match safety (zsh built-in)
-    setopt EXTENDED_GLOB NULL_GLOB 2>/dev/null
-
-    for pattern in "${glob_patterns[@]}"; do
-      pattern=$(echo "$pattern" | xargs)  # trim whitespace
-      files=( $PROJECT_DIR/$pattern )
-      if [[ ${#files[@]} -gt 0 ]]; then
-        found=1
-        break
-      fi
-    done
-
-    if [[ $found -eq 0 ]]; then
-      # Globs match 0 files = stale reference, delete
+    if [[ $days_since -ge $FORCE_DAYS ]]; then
       rm -f "$rule_file"
+      echo "[auto-cleanup] Removed stale rule: $(basename "$rule_file") (${days_since}d since last validation)"
     fi
   done
 }
@@ -75,17 +66,15 @@ cleanup_skills_in_dir() {
     is_stale=$(echo "$frontmatter" | grep -c '^stale:[[:space:]]*true' || true)
 
     if [[ $is_stale -gt 0 ]]; then
-      # Explicitly marked as stale, delete
       rm -rf "$skill_dir"
     elif [[ $has_name -eq 0 ]] || [[ $has_desc -eq 0 ]]; then
-      # Missing frontmatter, warn but don't delete
       echo "[auto-cleanup] WARNING: $(basename "$skill_dir") is missing name/description in SKILL.md frontmatter"
     fi
   done
 }
 
-# Run cleanup
-cleanup_rules
+# Run all cleanup
+cleanup_decay
 cleanup_skills_in_dir "$SKILLS_DIR"
 cleanup_skills_in_dir "$ROOT_SKILLS_DIR"
 
