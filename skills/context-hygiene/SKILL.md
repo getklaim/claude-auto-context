@@ -6,7 +6,7 @@
 - `.claude/rules/*.md` (committed team rules): READ-ONLY — analyze but never modify
 - `CLAUDE.md`: READ-ONLY — analyze but never modify
 - `.claude/rules/local/*.md` (auto-generated rules): full read/write access
-- Suggestion files in `.claude-auto-context/suggestions/`: create only
+- Hygiene files in `.claude-auto-context/hygiene/`: create only
 
 Run a 5-point quality audit on the project's `.claude/rules/*.md`, `.claude/rules/local/*.md`, and `CLAUDE.md` files.
 
@@ -23,7 +23,7 @@ Run a 5-point quality audit on the project's `.claude/rules/*.md`, `.claude/rule
    - **H-03 Stale Reference**: For each rules file with globs in frontmatter, use Glob to verify matching files exist — flag if 0 matches
    - **H-04 Verbosity**: Flag rules files over 500 chars where 50%+ compression is possible — suggest compressed version
    - **H-06 Priority Placement**: When 5+ rules files exist, flag critical rules (error handling, security, testing) that have narrow globs limiting visibility
-6. For each issue found, create a suggestion file in `.claude-auto-context/suggestions/` using the standard format:
+6. For each issue found, create a hygiene file in `.claude-auto-context/hygiene/` using the standard format:
    - Filename: `hygiene-YYYYMMDD-HHMMSS-{slug}.md` (type-prefixed, timestamp-based naming)
    - Include: Status (pending), Created (ISO 8601 UTC), Category (hygiene-*), Problem, Proposal, Evidence, Metrics sections
 7. Report summary: "{N} issues found, {M} context files analyzed"
