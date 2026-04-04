@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # worker-launcher.sh — Start polling worker if not already running.
 # Uses lock file to guarantee single instance.
 

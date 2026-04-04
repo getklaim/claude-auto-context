@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PostToolUse Hook
 # Pipes raw JSON from stdin to collector.
 

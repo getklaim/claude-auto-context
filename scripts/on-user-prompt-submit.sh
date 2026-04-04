@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # UserPromptSubmit Hook
 # 1. Pipes raw user prompt JSON from stdin to collector for DB storage.
 # 2. Scans .claude-auto-context/suggestions/ for pending suggestions (cached).

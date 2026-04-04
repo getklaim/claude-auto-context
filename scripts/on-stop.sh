@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Stop Hook
 # Skip Stop event storage (collector handles this).
 # Launch worker if ≥100 pending events.

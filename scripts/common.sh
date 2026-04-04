@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Common utilities for hooks
 # Source this file: source "$(dirname "$0")/common.sh"
 

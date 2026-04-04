@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Setup Hook — ensure dependencies and clean stale context files
 # Runs once when plugin is first loaded
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PostToolUse hook: bash-check-after-sh-edit
 # After Write or Edit on a .sh file, runs bash -n to catch syntax errors.
 

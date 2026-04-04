@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PreToolUse hook: block-conflict-markers-on-stage
 # Description: Blocks git add and git commit when conflict markers (<<<<<<, ======, >>>>>>) are found in files being staged — prevents committing unresolved merge conflicts.
 

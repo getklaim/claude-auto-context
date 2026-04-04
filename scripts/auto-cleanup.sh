@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Auto-cleanup stale rules and skills
 # Runs on session start via Setup hook
 # 1. Convention decay: force-deletes rules with last_validated older than 60 days

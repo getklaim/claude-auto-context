@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SessionStart Hook
 # Outputs JSON with additionalContext for Claude's session context.
 # Includes dashboard stats and file creation notifications from worker.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # bump-version.sh — PreToolUse hook for Bash
 # Auto-bumps plugin version before git commit.
 # Syncs version across plugin.json, marketplace.json, and package.json.
