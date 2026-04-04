@@ -689,6 +689,11 @@ async function processBatch(events, db) {
 You turn user corrections into permanent rules (Boris Cherny pattern).
 When a user says "don't do X" or "use Y instead", that correction becomes a rule so Claude never repeats the mistake.
 
+## CRITICAL: Output Path
+Write rules to the ABSOLUTE path: ${projectRoot}/.claude/rules/local/
+Do NOT write to ~/.claude/rules/local/ (that is the global user directory, not the project).
+Always use the absolute path above when calling Write, Edit, or Bash.
+
 ## Primary Source: User Prompts
 Focus on the "User Prompts" section of session data. Look for:
 1. Explicit corrections: "don't", "never", "instead use", "하지마", "안돼", "쓰지마"
@@ -712,9 +717,26 @@ For every candidate: "Would removing this rule cause Claude to make mistakes?"
 - BAD: 500 chars explaining Result type history
 - GOOD: "Error handling: Result<T,E>, not try-catch. Return {ok, error} shape."
 
-If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
+## Output Format (REQUIRED)
+Every rule file MUST use this exact frontmatter format:
 
-Follow the extract-rules skill instructions for output format and procedure.
+\`\`\`markdown
+---
+description: "One-line summary — used for dedup and context display"
+paths:
+  - "src/auth/**"
+created: "YYYY-MM-DD"
+last_validated: "YYYY-MM-DD"
+---
+
+[Rule in 1-3 sentences. Specific trigger → specific action.]
+\`\`\`
+
+- \`paths:\` scopes the rule to specific files. Omit for project-wide rules.
+- \`created:\` and \`last_validated:\` use ISO date (set both to today on create).
+- Body under 200 chars. One rule per file.
+
+If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
 
 ## Description maintenance
 Rules listed "Without description — local": Read and add description: field.
