@@ -494,6 +494,30 @@ pending
 - One suggestion file per issue. Do not combine multiple issues.`;
 }
 
+// --- Orchestrator System Prompt (static, cacheable) ---
+
+function buildOrchestratorSystemPrompt() {
+  return `You are an orchestrator. Analyze the session data provided in the user message and delegate to ALL FIVE agents below.
+You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
+
+1. rules-agent — Repeated conventions
+   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
+   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.
+2. suggestion-agent — AI-unfriendly code patterns and structural issues
+   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.
+3. hooks-agent — Detect repetitive manual actions and generate hook configurations
+   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
+4. skill-agent — Detect repeated multi-step workflows and create SKILL.md files
+   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.
+5. hygiene-agent — Context quality audit
+   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.
+
+Call all five agents now.`;
+}
+
+const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorSystemPrompt();
+log(`orchestrator-system-prompt: length=${ORCHESTRATOR_SYSTEM_PROMPT.length} hash=${Array.from(new Uint8Array(new TextEncoder().encode(ORCHESTRATOR_SYSTEM_PROMPT).slice(0, 64))).reduce((h, b) => ((h << 5) - h + b) | 0, 0).toString(16)}`);
+
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
@@ -509,24 +533,9 @@ async function processBatch(events, db) {
 
   try {
     const result = query({
-      prompt: `${bulkPrompt}
-You are an orchestrator. Analyze the above session data and delegate to ALL FIVE agents below.
-You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
-
-1. rules-agent — Repeated conventions
-   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.
-   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.
-2. suggestion-agent — AI-unfriendly code patterns and structural issues
-   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.
-3. hooks-agent — Detect repetitive manual actions and generate hook configurations
-   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.
-4. skill-agent — Detect repeated multi-step workflows and create SKILL.md files
-   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.
-5. hygiene-agent — Context quality audit
-   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.
-
-Call all five agents now.`,
+      prompt: `${bulkPrompt}\n\n${existingContextSummary}\n\n${rulesTopicIndex}`,
       options: {
+        systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
         model: 'sonnet',
         cwd: projectRoot,
         allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Bash', 'Task'],
@@ -542,6 +551,21 @@ Call all five agents now.`,
           "rules-agent": {
             description: "Extract implicit conventions from user corrections in session data. Creates .claude/rules/ files following Boris Cherny's 'institutional memory' pattern: past mistakes become permanent rules.",
             prompt: `${existingContextSummary}
+
+## CRITICAL: Output Path
+Write rules ONLY to: ${projectRoot}/.claude/rules/local/
+Use absolute paths. NEVER write to ~/.claude/ or any path outside the project.
+
+## CRITICAL: File Format (every rule file MUST follow this exactly)
+\`\`\`
+---
+description: "One-line summary of what this rule prevents"
+---
+
+[Rule body — under 200 chars. Specific trigger → specific action.]
+\`\`\`
+Files WITHOUT the \`---\` frontmatter block and \`description:\` field are INVALID.
+Add \`globs:\` only when the rule applies to specific file patterns.
 
 ## Conservative Behavior (ORCH-03)
 Before creating any new rule, check the context summary above.
@@ -766,14 +790,27 @@ description: {one-line description}. USE WHEN {trigger phrase}.
 - Do NOT {common misuse}
 \`\`\`
 
-## Deduplication (SKIL-04)
+## Cross-Artifact Deduplication (SKIL-04)
 
-Check the "Skills" section in the context summary above. Do NOT create a skill that overlaps with any existing skill by name or workflow purpose.
+Before creating a skill, check ALL of these for overlap — not just existing skills:
+1. **Existing skills** in the "Skills" section of the context summary above
+2. **CLAUDE.md** — constraint tables, architecture sections, convention docs
+3. **Rules** in \`.claude/rules/local/\` — behavioral guardrails already enforced
+
+If a constraint, anti-pattern, or guardrail already exists in CLAUDE.md or rules:
+- Do NOT duplicate it in the skill. Write \`See CLAUDE.md: {section name}\` instead.
+- The skill should contain ONLY the procedure (step ordering, tool chain) that is NOT documented elsewhere.
+
+## Path Verification (SKIL-05)
+
+Before referencing any file path in a skill, verify it exists with Glob or ls.
+Do NOT write paths from memory — wrong paths make the skill actively harmful.
 
 ## Rules
 - Maximum 1 skill per batch. Pick the strongest candidate.
 - If no candidate passes the Necessity Gate, create nothing. Most sessions will NOT yield a skill.
-- Use concrete tool names and file patterns from the session data, not generic placeholders.`,
+- Use concrete tool names and file patterns from the session data, not generic placeholders.
+- Anti-Patterns section is OPTIONAL. Only include if the anti-pattern is novel (not in CLAUDE.md/rules).`,
             tools: ['Read', 'Write', 'Glob', 'Bash'],
             maxTurns: 20,
           },
@@ -798,7 +835,9 @@ ${buildHygienePrompt(projectRoot)}`,
     for await (const message of result) {
       if (message.type === 'result') {
         const denials = message.permission_denials?.length ?? 0;
-        log(`agent-batch session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
+        const cacheRead = message.usage?.cache_read_input_tokens ?? 0;
+        const cacheCreate = message.usage?.cache_creation_input_tokens ?? 0;
+        log(`agent-batch session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} cache_read=${cacheRead} cache_create=${cacheCreate} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
         if (denials > 0) {
           log(`agent-batch WARNING: ${denials} permission denial(s) detected — check settings.json permissions`);
         }
@@ -872,8 +911,13 @@ async function main() {
       writeFileSync(settingsPath, JSON.stringify({
         permissions: {
           allow: [
-            ".claude/rules/local/**",
-            ".claude-auto-context/suggestions/**"
+            "Read(.claude/**)",
+            "Write(.claude/rules/local/**)",
+            "Edit(.claude/rules/local/**)",
+            "Write(.claude/skills/**)",
+            "Edit(.claude/skills/**)",
+            "Write(.claude-auto-context/suggestions/**)",
+            "Write(.claude-auto-context/skill-prompts/**)"
           ]
         }
       }, null, 2));
