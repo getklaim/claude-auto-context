@@ -63,7 +63,7 @@ if [ -f "$NOTIF_PATH" ]; then
   elif command -v python3 >/dev/null 2>&1; then
     CREATED_FILES=$(python3 -c "import json,sys; [print(f) for f in json.load(open(sys.argv[1])).get('created',[])]" "$NOTIF_PATH" 2>/dev/null)
   else
-    CREATED_FILES=$(grep -oP '"[^"]+\.md"' "$NOTIF_PATH" 2>/dev/null | tr -d '"')
+    CREATED_FILES=$(grep -oE '"[^"]+"' "$NOTIF_PATH" 2>/dev/null | tr -d '"' | grep '/')
   fi
 
   if [ -n "$CREATED_FILES" ]; then
