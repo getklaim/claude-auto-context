@@ -771,7 +771,7 @@ ${rulesTopicIndex}`,
 
 ## Output format
 
-Create suggestion files at: \`.claude-auto-context/suggestions/YYYYMMDD-HHMMSS-{slug}.md\`
+Create suggestion files at: \`.claude-auto-context/suggestions/suggestion-YYYYMMDD-HHMMSS-{slug}.md\`
 Use current UTC time for the timestamp.
 
 Each suggestion MUST include (SUGG-03):
@@ -786,26 +786,42 @@ Each suggestion MUST include (SUGG-03):
 pending
 
 ## Created
-{ISO 8601 UTC timestamp}
+{ISO 8601 UTC timestamp, e.g. 2026-03-27T14:30:52Z}
 
 ## Category
 {ai-unfriendly-large-file | ai-unfriendly-naming | ai-unfriendly-missing-docs | ai-unfriendly-structure | ai-unfriendly-fragile}
 
 ## Problem
-{description with specific file names from session data and quantitative evidence}
+{Description with quantitative evidence and specific file names}
 
 ## Related Files
 - {file1.ext} — {why this file is involved}
 - {file2.ext} — {why this file is involved}
 
 ## Proposal
-{concrete fix: split file X into A and B, rename directory Y, add CLAUDE.md entry for Z}
 
-## Evidence
-- Sessions: {list of session IDs where pattern appeared}
-- Events: {count of relevant events}
-- Pattern: {specific tool-use pattern observed}
+### Files to modify
+- {file1.ext} — {what changes in this file}
+- {file2.ext} — {what changes in this file (use "new file" for creation)}
+
+### Changes
+1. {In file1.ext: specific change description with enough detail to execute without ambiguity}
+2. {In file2.ext: specific change description}
+
+### Acceptance criteria
+- [ ] {verifiable condition — e.g., "file2.ext exists and exports functionName"}
+- [ ] {verifiable condition — e.g., "file1.ext imports from file2.ext"}
+
+## Evidence Sessions
+- session_{id} ({date}): {what was observed}
+
+## Metrics
+- Signal ratio: {X}%
+- Sessions affected: {N}/{total}
+- Estimated impact: {description}
 \`\`\`
+
+**IMPORTANT**: The \`## Proposal\` section MUST contain all three subsections (\`### Files to modify\`, \`### Changes\`, \`### Acceptance criteria\`). Proposals without these subsections are incomplete and will be rejected.
 
 ## Rules
 - Reference specific file paths from the session events — never use generic placeholders
