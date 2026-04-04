@@ -210,6 +210,13 @@ export function takeContentSnapshot(projectRoot) {
       snapshot[resolve(suggestionsDir, f)] = readFileSync(resolve(suggestionsDir, f), 'utf8');
     }
   }
+  const hygieneDir = resolve(projectRoot, '.claude-auto-context', 'hygiene');
+  if (existsSync(hygieneDir)) {
+    for (const f of readdirSync(hygieneDir)) {
+      if (!f.endsWith('.md')) continue;
+      snapshot[resolve(hygieneDir, f)] = readFileSync(resolve(hygieneDir, f), 'utf8');
+    }
+  }
   return snapshot;
 }
 
@@ -278,6 +285,7 @@ export function runQualityGate(snapshotBefore, projectRoot) {
   const rulesDir = resolve(projectRoot, '.claude', 'rules');
   const localRulesDir = resolve(projectRoot, '.claude', 'rules', 'local');
   const suggestionsDir = resolve(projectRoot, '.claude-auto-context', 'suggestions');
+  const hygieneDir = resolve(projectRoot, '.claude-auto-context', 'hygiene');
 
   // Find changed/new files
   const changes = [];
@@ -287,6 +295,7 @@ export function runQualityGate(snapshotBefore, projectRoot) {
       let fileType = 'unknown';
       if (path.startsWith(rulesDir + '/') || path.startsWith(localRulesDir + '/')) fileType = 'rule';
       else if (path.startsWith(suggestionsDir + '/')) fileType = 'suggestion';
+      else if (path.startsWith(hygieneDir + '/')) fileType = 'suggestion';
 
       changes.push({ path, contentBefore, contentAfter, fileType,
         action: contentBefore === null ? 'created' : 'modified' });
@@ -306,7 +315,7 @@ export function runQualityGate(snapshotBefore, projectRoot) {
   // Build existing suggestions map (pre-change state) for dedup + count cap
   const existingSuggestions = {};
   for (const [path, content] of Object.entries(snapshotBefore)) {
-    if (path.startsWith(suggestionsDir + '/')) existingSuggestions[path] = content;
+    if (path.startsWith(suggestionsDir + '/') || path.startsWith(hygieneDir + '/')) existingSuggestions[path] = content;
   }
 
   const results = [];
