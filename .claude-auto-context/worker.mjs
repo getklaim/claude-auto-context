@@ -488,8 +488,15 @@ pending
 {description with specific file names and content excerpts}
 
 ## Proposal
-{concrete fix: merge these files / remove this rule /
- rewrite as follows / move this section to a rules file}
+
+### Files to modify
+- {file.ext} — {what changes}
+
+### Changes
+1. {specific change description}
+
+### Acceptance criteria
+- [ ] {verifiable condition}
 
 ## Evidence
 - Source: hygiene-agent automated check
