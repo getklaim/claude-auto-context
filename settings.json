@@ -10,6 +10,7 @@
       "Edit(.claude/hooks/**)",
       "Edit(.claude/settings.json)",
       "Write(.claude-auto-context/suggestions/**)",
+      "Write(.claude-auto-context/hygiene/**)",
       "Write(.claude-auto-context/skill-prompts/**)"
     ]
   }
