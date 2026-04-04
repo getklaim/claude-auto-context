@@ -351,7 +351,7 @@ function buildHygienePrompt(root) {
   const rulesDir = resolve(root, '.claude', 'rules');
   const localRulesDir = resolve(root, '.claude', 'rules', 'local');
   const claudeMdPath = resolve(root, 'CLAUDE.md');
-  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
+  const hygieneDir = resolve(root, '.claude-auto-context', 'hygiene');
 
   let committedRulesContent = '';
   if (existsSync(rulesDir)) {
@@ -384,7 +384,7 @@ function buildHygienePrompt(root) {
 - \`.claude/rules/*.md\` (committed team rules): READ-ONLY — analyze but never modify
 - \`CLAUDE.md\`: READ-ONLY — analyze but never modify
 - \`.claude/rules/local/*.md\` (auto-generated rules): full read/write access
-- Suggestion files in \`.claude-auto-context/suggestions/\`: create only
+- Hygiene files in \`.claude-auto-context/hygiene/\`: create only
 
 You are a context hygiene auditor. Your job is to analyze the project's
 context files (committed rules, local rules, and CLAUDE.md) for quality issues.
@@ -404,8 +404,8 @@ ${claudeMd || '(empty)'}
 
 ## Your 5-Point Checklist
 
-When you find an issue, create a suggestion file at:
-\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
+When you find an issue, create a hygiene file at:
+\`.claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use current UTC time for the timestamp (e.g. hygiene-20260323-143052-stale-glob.md).
 **IMPORTANT**: Always use the \`hygiene-\` prefix. Do NOT infer a naming pattern from existing files in the directory.
@@ -452,8 +452,8 @@ Flag decayed rules so the user can confirm removal.
 
 ## Output Format
 
-Create one file per TARGET FILE (not per issue). If a rules file has multiple problems (e.g. stale globs AND verbosity), combine them into ONE suggestion file.
-\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
+Create one file per TARGET FILE (not per issue). If a rules file has multiple problems (e.g. stale globs AND verbosity), combine them into ONE hygiene file.
+\`.claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use exactly this format:
 
@@ -491,7 +491,7 @@ pending
 - Only report real issues. If all 5 checks pass, create no files.
 - Do NOT modify committed rules files or CLAUDE.md.
 - Read existing suggestions first to avoid duplicating pending suggestions.
-- One suggestion file per issue. Do not combine multiple issues.`;
+- One hygiene file per issue. Do not combine multiple issues.`;
 }
 
 // --- Orchestrator System Prompt (static, cacheable) ---
@@ -587,7 +587,7 @@ Checks rules, hooks, and suggestions for duplicates, contradictions, stale refer
 - H-06 Priority Ordering: Critical rules with narrow globs that limit visibility
 - H-07 Convention Decay: Rules referencing non-existent patterns, 30+ days without reinforcement
 
-**Output:** .claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md
+**Output:** .claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md
 **Constraints:** Only report real issues. If all checks pass, create no files. Do NOT modify committed rules or CLAUDE.md.
 
 ## Conservative Behavior Protocol (ORCH-03)
@@ -649,7 +649,7 @@ When analyzing session data, these patterns indicate high-value extraction oppor
 ## Inter-Agent Coordination
 
 - rules-agent and hooks-agent may detect overlapping patterns. A linting command run manually should become a hook (automation), NOT a rule (instruction).
-- suggestion-agent and hygiene-agent both create files in suggestions/. suggestion-agent creates structural improvement proposals; hygiene-agent creates cleanup proposals for existing context artifacts.
+- suggestion-agent creates files in suggestions/; hygiene-agent creates files in hygiene/. suggestion-agent creates structural improvement proposals; hygiene-agent creates cleanup proposals for existing context artifacts.
 - skill-agent should verify its candidates don't overlap with existing rules or CLAUDE.md entries before creating.
 
 ## Cost Awareness
