@@ -6,13 +6,15 @@ Think of it as "organizational scar tissue" — but automated.
 
 ## How it works
 
-It starts the moment you open a Claude Code session. Every tool call — every `Glob`, `Read`, `Edit`, `Bash` — gets silently captured and stored in a local SQLite database. No filtering, no analysis at capture time. Just raw events.
+It starts the moment you open a Claude Code session. Tool calls (`Edit`, `Write`, `Bash`, `NotebookEdit`) and user prompts get silently captured and stored in a local SQLite database. Payloads are compressed at ingestion — only metadata (file paths, commands) is kept, not full file contents.
 
-When your session ends, a background worker wakes up. It analyzes the accumulated events across sessions and looks for patterns — conventions, anti-patterns, implicit knowledge — and acts on them:
+When enough events accumulate (100+), a background worker launches. It analyzes the events across sessions, delegates to specialized sub-agents via the Claude Agent SDK, and produces:
 
-1. **Rules files** (`.claude/rules/*.md`) are auto-generated from repeated patterns. These load automatically when Claude touches matching files.
-2. **CLAUDE.md updates** are made for project-wide implicit knowledge like non-obvious build commands.
-3. **Structural suggestions** are created when the worker detects deeper issues (like a file that should be split). These require your explicit approval.
+1. **Rules files** (`.claude/rules/local/*.md`) are auto-generated from repeated conventions and user corrections. Claude loads them automatically when touching matching files.
+2. **Structural suggestions** are created when agents detect AI-unfriendly code patterns (monoliths, unclear naming, missing context). These require your explicit approval.
+3. **Skills** (`.claude/skills/*/SKILL.md`) are extracted from repeated multi-step workflows — reusable slash commands.
+4. **Hooks** (`.claude/hooks/*.sh`) are generated when repetitive manual actions are detected (lint, format, test).
+5. **Hygiene reports** flag duplicates, contradictions, and stale references in existing rules and suggestions.
 
 Nothing structural changes without your say-so. You run `/cac-apply`, review the evidence, and decide.
 
@@ -42,7 +44,7 @@ Or open the interactive plugin manager with `/plugin`, navigate to the **Marketp
 
 ### Verify Installation
 
-Start a new Claude Code session. The setup hook will auto-install dependencies. The background worker will automatically analyze your sessions — no manual verification needed.
+Start a new Claude Code session. The setup hook will auto-install Bun (if missing) and create `.claude/rules/local/`. The background worker launches automatically when enough events accumulate — no manual setup needed.
 
 ### Updating
 
@@ -54,13 +56,16 @@ Start a new Claude Code session. The setup hook will auto-install dependencies. 
 
 ### Automatic (Zero Config)
 
-Once installed, three hooks fire automatically during every session:
+Once installed, hooks fire automatically across six lifecycle events:
 
 | Event | What happens |
 |-------|-------------|
-| **Session start** | Installs dependencies if needed |
-| **Tool use** | Captures raw event → SQLite (every `Glob`, `Read`, `Edit`, `Bash`) |
-| **Session stop** | Captures session summary → SQLite, triggers background worker |
+| **SessionStart** | Outputs dashboard stats (rules count, pending suggestions, DB size) into session context |
+| **Setup** | Installs Bun if missing, creates `.claude/rules/local/`, runs auto-cleanup |
+| **UserPromptSubmit** | Captures user prompt → SQLite (uncompressed, to preserve intent), checks for pending suggestions |
+| **PreToolUse** | Version sync on commit, blocks conflict markers and planning files from staging |
+| **PostToolUse** | Captures `Edit\|Write\|Bash\|NotebookEdit` events → SQLite (compressed), syntax checks on edited files |
+| **Stop** | Launches background worker if 100+ pending events |
 
 All hooks execute in under 100ms. You never notice them.
 
@@ -68,21 +73,24 @@ All hooks execute in under 100ms. You never notice them.
 
 | Command | Purpose |
 |---------|---------|
-| `/cac-apply {suggestion-id}` | Review and apply a specific structural suggestion |
-| `/cac-apply-all` | Apply all pending suggestions sequentially |
+| `/cac-apply` | Review and apply a specific structural suggestion |
+| `/create-suggestion` | Manually create a structural suggestion with evidence |
+| `/extract-rules` | Manually extract convention rules from current session |
+| `/context-hygiene` | Run a context quality audit (duplicates, contradictions, stale refs) |
+| `/cac-create-skill` | Create a SKILL.md from a detected workflow pattern |
+| `/run-worker` | Manually trigger the background worker |
 
 ### What the Worker Produces
 
 **Auto-generated** (no approval needed):
 
 ```
-.claude/rules/
-  error-handling.md    ← "Use Result type, not try-catch" (glob: src/**/*.ts)
-  api-patterns.md      ← "All endpoints return ApiResponse<T>" (glob: src/api/**)
-  testing.md           ← "Run tests with: bun test --filter=unit"
+.claude/rules/local/
+  error-handling.md    ← "Use Result type, not try-catch" (globs: src/**/*.ts)
+  api-patterns.md      ← "All endpoints return ApiResponse<T>" (globs: src/api/**)
 ```
 
-Rules files are scoped by glob pattern. Claude loads them automatically when it touches matching files — no CLAUDE.md bloat.
+Rules files are scoped by glob pattern via frontmatter. Claude loads them automatically when it touches matching files — no CLAUDE.md bloat. Rules auto-decay: revalidated after 30 days, force-deleted after 60 days of no validation.
 
 **Suggestions** (requires your approval):
 
@@ -99,48 +107,51 @@ Each suggestion includes the problem, proposed fix, and evidence from specific s
 ```
 Main Claude Session
 │
-├─► Glob ──► PostToolUse Hook ──► RAW JSON ──┐
-├─► Read ──► PostToolUse Hook ──► RAW JSON ──┤
-├─► Edit ──► PostToolUse Hook ──► RAW JSON ──┤  No analysis.
-├─► Bash ──► PostToolUse Hook ──► RAW JSON ──┤  Just store.
-│                                             │
-└─► Stop ──► Stop Hook ────────► RAW JSON ──┤
-                                             │
-                                             ▼
-                                      ┌─────────────┐
-                                      │   SQLite     │
-                                      │  raw_events  │
-                                      └──────┬───────┘
-                                             │
-                                        (polling)
-                                             │
-                                             ▼
-                                      ┌──────────────┐
-                                      │  Background  │
-                                      │   Worker     │
-                                      │              │
-                                      │ ┌──────────┐ │
-                                      │ │Rules Agent│─┼─► .claude/rules/ (auto)
-                                      │ │Suggestion │─┼─► suggestions/ (pending)
-                                      │ │ ClaudeMD  │─┼─► CLAUDE.md (auto)
-                                      │ └──────────┘ │
-                                      │(3 sub-agents)│
-                                      └──────────────┘
+├─► Edit ───► PostToolUse Hook ──► collector.mjs ──┐
+├─► Write ──► PostToolUse Hook ──► collector.mjs ──┤  Compressed
+├─► Bash ───► PostToolUse Hook ──► collector.mjs ──┤  at ingestion.
+├─► Notebook► PostToolUse Hook ──► collector.mjs ──┤
+│                                                   │
+├─► Prompt ─► UserPromptSubmit ──► collector.mjs ──┤  Uncompressed
+│                                                   │  (user intent).
+│                                                   ▼
+│                                            ┌─────────────┐
+│                                            │   SQLite     │
+│                                            │  raw_events  │
+│                                            └──────┬───────┘
+│                                                   │
+└─► Stop ──► threshold check (≥100) ──► worker-launcher.sh
+                                                   │
+                                                   ▼
+                                            ┌──────────────────┐
+                                            │ Background Worker │
+                                            │  (Agent SDK)      │
+                                            │                   │
+                                            │ ┌───────────────┐ │
+                                            │ │ rules-agent   │─┼─► .claude/rules/local/ (auto)
+                                            │ │ suggestion    │─┼─► suggestions/ (pending)
+                                            │ │ hooks-agent   │─┼─► .claude/hooks/ (auto)
+                                            │ │ skill-agent   │─┼─► .claude/skills/ (auto)
+                                            │ │ hygiene-agent │─┼─► hygiene/ (pending)
+                                            │ └───────────────┘ │
+                                            │  + quality gate   │
+                                            └──────────────────┘
 ```
 
 ### Data Flow
 
-1. **Hooks** are dumb pipes. They receive raw JSON on stdin and forward it to the collector. No parsing, no filtering.
-2. **Collector** (`collector.mjs`) parses JSON and inserts into SQLite with parameterized queries. Safe escaping, no shell injection risks.
-3. **SQLite** stores everything in `raw_events` table with `processed=0`.
-4. **Worker** polls for unprocessed events, analyzes patterns across sessions, and produces rules/suggestions/CLAUDE.md updates.
+1. **Hooks** are dumb pipes. Shell scripts receive raw JSON on stdin and forward it to `collector.mjs`.
+2. **Collector** parses JSON and compresses PostToolUse payloads at ingestion (strips tool responses, keeps only metadata). UserPromptSubmit payloads are stored uncompressed. Stop events are skipped entirely.
+3. **SQLite** stores events in `raw_events` with a claim-confirm queue pattern (`pending` → `processing` → `done`).
+4. **Worker** polls for pending events, builds a bulk prompt, and delegates to an orchestrator that dispatches to 5 sub-agents via the Claude Agent SDK. Each agent runs conditionally — skipped if its input criteria aren't met.
+5. **Quality Gate** evaluates agent output after each batch. Low-quality changes can be auto-reverted.
 
 ### Why SQLite, Not JSON Files
 
 - Concurrent writes from multiple hooks don't corrupt data (WAL mode)
 - Querying across thousands of events is instant
 - No file-per-event explosion
-- Worker can atomically mark events as processed
+- Claim-confirm queue pattern enables reliable batch processing with self-healing
 
 ## Data Store
 
@@ -148,23 +159,26 @@ All runtime data lives in `.claude-auto-context/` in your project root:
 
 ```
 .claude-auto-context/
-├── collector.mjs          # Hook → SQLite relay
+├── collector.mjs              # Hook → SQLite relay (compressed ingestion)
+├── worker.mjs                 # Background polling worker (Agent SDK orchestrator)
+├── quality-gate.mjs           # Post-agent output evaluator
+├── skill-prompt-builder.mjs   # Builds context for skill-agent
 ├── db/
-│   └── claude-auto-context.db    # SQLite (raw_events, sessions, insights)
-└── suggestions/
-    ├── 001-split-utils.md        # pending
-    └── 002-unify-routes.md       # pending
+│   ├── claude-auto-context.db # SQLite (raw_events, observations, quality_evaluations)
+│   └── worker.log             # Worker activity log
+├── suggestions/               # Pending structural suggestions
+└── hygiene/                   # Pending hygiene reports
 ```
 
 The SQLite database contains three tables:
 
 | Table | Purpose |
 |-------|---------|
-| `raw_events` | Every hook event, unprocessed. The source of truth. |
-| `sessions` | Worker-generated session summaries (task type, files touched, patterns found) |
-| `insights` | Cumulative analysis results (conventions, structure suggestions) |
+| `raw_events` | Every captured event with claim-confirm queue (`pending` → `processing` → `done` / `dead`) |
+| `observations` | Cross-session pattern observations (deduplicated by pattern_key + session_id) |
+| `quality_evaluations` | Quality gate verdicts for agent-generated files |
 
-The `db/` directory is gitignored — it's machine-local runtime data. Rules files and suggestions are committed.
+The `db/` directory is gitignored — it's machine-local runtime data.
 
 ## Philosophy
 
@@ -173,59 +187,54 @@ The `db/` directory is gitignored — it's machine-local runtime data. Rules fil
 - **Dumb collection, smart analysis** — Hooks are fast and stupid (<100ms). All intelligence lives in the background worker where latency doesn't matter.
 - **Human-in-the-loop for structure** — Convention rules auto-generate. Structural suggestions (file splits, directory reorganization) always require approval via `/cac-apply`.
 - **Local and private** — All processing happens on your machine. SQLite is local. No data leaves your project.
-- **Self-correcting** — Conventions that stop being relevant decay. Suggestions that get dismissed teach the worker what not to suggest.
+- **Self-correcting** — Conventions that stop being relevant auto-decay (30-day revalidation, 60-day force-delete). Suggestions that get dismissed are marked, not re-proposed.
 
 ## Requirements
 
 - Claude Code 1.0.33+
-- Node.js 18+ (for `collector.mjs`)
-- `better-sqlite3` (auto-installed by setup hook)
+- [Bun](https://bun.sh) (auto-installed by setup hook if missing)
+- `@anthropic-ai/claude-agent-sdk` (bundled in `package.json`)
 
 ## Project Structure
 
 ```
 claude-auto-context/
 ├── .claude-plugin/
-│   ├── plugin.json            # Plugin manifest
-│   └── marketplace.json       # Marketplace definition
+│   ├── plugin.json              # Plugin manifest
+│   └── marketplace.json         # Marketplace definition
 ├── hooks/
-│   └── hooks.json             # Hook definitions (Setup, PostToolUse, Stop)
+│   └── hooks.json               # Hook definitions (6 lifecycle events)
 ├── scripts/
-│   ├── setup.sh               # Installs dependencies
-│   ├── on-post-tool-use.sh    # Pipes tool events → collector
-│   └── on-stop.sh             # Pipes session end → collector
+│   ├── setup.sh                 # Installs Bun, creates dirs, runs auto-cleanup
+│   ├── on-session-start.sh      # Dashboard stats → session context
+│   ├── on-user-prompt-submit.sh # Captures user prompt, checks pending suggestions
+│   ├── on-post-tool-use.sh      # Pipes tool events → collector
+│   ├── on-stop.sh               # Threshold check → worker launch
+│   ├── worker-launcher.sh       # Single-instance worker launcher (lock file)
+│   ├── bump-version.sh          # Version sync across plugin.json/marketplace.json/package.json
+│   ├── block-conflict-markers-on-stage.sh
+│   ├── bash-check-after-sh-edit.sh
+│   ├── auto-cleanup.sh          # Convention decay + stale artifact cleanup
+│   └── common.sh                # Shared shell helpers
 ├── .claude-auto-context/
-│   └── collector.mjs          # JSON → SQLite relay
-├── docs/
-│   ├── architecture.md        # Architecture overview
-│   ├── hook-collection.md     # Hook Collection + SQL Storage
-│   └── background-worker.md   # Background Worker
-├── package.json               # Dependencies (better-sqlite3)
+│   ├── collector.mjs            # JSON → SQLite relay
+│   ├── worker.mjs               # Background worker (5 sub-agents via Agent SDK)
+│   ├── quality-gate.mjs         # Output quality evaluator
+│   └── skill-prompt-builder.mjs # Skill context builder
+├── skills/                      # Plugin-shipped skills (distribution copies)
+│   ├── cac-apply/SKILL.md
+│   ├── create-suggestion/SKILL.md
+│   ├── extract-rules/SKILL.md
+│   ├── context-hygiene/SKILL.md
+│   ├── cac-create-skill/SKILL.md
+│   └── run-worker/SKILL.md
+├── package.json                 # Dependencies (@anthropic-ai/claude-agent-sdk)
 └── README.md
 ```
 
-## Roadmap
-
-- [x] Hook → Collector → SQLite pipeline
-- [x] SQLite polling worker (Claim-Confirm queue pattern)
-- [ ] 3 sub-agent architecture (Rules Agent, Suggestion Agent, CLAUDE.md Agent)
-- [ ] Bulk prompt construction from SQLite data
-- [ ] Auto-generated `.claude/rules/` from conventions (Rules Agent)
-- [ ] Suggestions system for structural proposals (Suggestion Agent)
-- [ ] CLAUDE.md auto-update for implicit knowledge (CLAUDE.md Agent)
-- [ ] `/cac-apply` suggestion review and application
-- [ ] Convention decay (auto-remove stale rules)
-
-## Want the Easy Version?
-
-If the above feels too technical, check out the plain-language walkthrough — using analogies instead of jargon:
-
-- [English](docs/easy-explanation.md)
-- [한국어](docs/easy-explanation-ko.md)
-
 ## Contributing
 
-Contributions welcome. The codebase is intentionally simple — shell scripts for hooks, one Node.js collector, and SQLite for storage.
+Contributions welcome. The codebase is shell scripts for hooks, Bun/JS for collection and worker logic, and SQLite for storage.
 
 1. Fork the repository
 2. Create a branch for your change
