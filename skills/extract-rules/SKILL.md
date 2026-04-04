@@ -60,10 +60,15 @@ Session "Tool Activity" is secondary — use it to verify patterns, not as prima
 description: "One-line summary — used for dedup and context display"
 globs:
   - "src/auth/**"
+created: "2026-03-30"
+last_validated: "2026-03-30"
 ---
 
 [Rule in 1-3 sentences. Specific trigger → specific action.]
 ```
+
+- `created`: ISO date when the rule was first written
+- `last_validated`: ISO date when the rule was last confirmed still relevant (set to today on create/update)
 
 **Size:** Each rule file should be under 200 characters body. One rule per file. If you need more detail, you're writing documentation, not a rule.
 

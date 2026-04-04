@@ -36,7 +36,7 @@ else
   echo "$ENTRY" > "$GITIGNORE"
 fi
 
-# Auto-cleanup stale rules and skills
+# Auto-cleanup: convention decay + stale rules/skills
 "$SCRIPT_DIR/auto-cleanup.sh" 2>/dev/null || true
 
 exit 0

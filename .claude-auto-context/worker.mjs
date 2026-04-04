@@ -36,6 +36,64 @@ function log(msg) {
   try { appendFileSync(logPath, line); } catch {}
 }
 
+// --- Convention Decay ---
+
+const DECAY_THRESHOLD_DAYS = 30;  // revalidate after 30 days
+const DECAY_FORCE_DAYS = 60;      // force-delete after 60 days (safety net)
+
+function getStaleRules(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  if (!existsSync(rulesDir)) return [];
+
+  const today = new Date();
+  const stale = [];
+
+  for (const entry of readdirSync(rulesDir)) {
+    if (!entry.endsWith('.md')) continue;
+    const fullPath = resolve(rulesDir, entry);
+    const content = readFileSync(fullPath, 'utf8');
+
+    // Extract last_validated from frontmatter
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!fmMatch) continue;
+
+    const lvMatch = fmMatch[1].match(/^last_validated:\s*"?(\d{4}-\d{2}-\d{2})"?/m);
+    if (!lvMatch) continue;
+
+    const lastValidated = new Date(lvMatch[1]);
+    const daysSince = Math.floor((today - lastValidated) / (1000 * 60 * 60 * 24));
+
+    if (daysSince >= DECAY_FORCE_DAYS) {
+      // Too old, force delete
+      unlinkSync(fullPath);
+      log(`decay: force-deleted ${entry} (${daysSince} days since last validation)`);
+    } else if (daysSince >= DECAY_THRESHOLD_DAYS) {
+      stale.push({ file: entry, path: fullPath, content, daysSince });
+    }
+  }
+
+  return stale;
+}
+
+function buildDecayPrompt(staleRules) {
+  let prompt = `# Convention Decay Check
+
+You are a rules validator. For each rule below, determine if it is still relevant
+to the current codebase. Use the Glob and Read tools to verify.
+
+For each rule:
+- If STILL VALID: update only the \`last_validated\` field in frontmatter to today's date (${new Date().toISOString().split('T')[0]})
+- If NO LONGER RELEVANT: delete the file entirely
+
+## Rules to Validate
+
+`;
+  for (const r of staleRules) {
+    prompt += `### ${r.file} (${r.daysSince} days since last validation)\n\`\`\`\n${r.content}\n\`\`\`\n\n`;
+  }
+  return prompt;
+}
+
 // --- Queue Operations ---
 
 function selfHeal(db, forceAll = false) {
@@ -124,6 +182,12 @@ function compressPayload(toolName, payload) {
       case 'AskUserQuestion':
       case 'WebSearch':
         return null; // skip entirely
+      case 'Edit':
+        return `edit ${input.file_path || '(unknown)'} (${(input.old_string || '').length}→${(input.new_string || '').length} chars)`;
+      case 'Write':
+        return `write ${input.file_path || '(unknown)'} (${(input.content || '').length} chars)`;
+      case 'NotebookEdit':
+        return `notebook-edit ${input.notebook_path || '(unknown)'} cell#${input.cell_number ?? '?'}`;
       default:
         return undefined; // use original payload
     }
@@ -286,75 +350,65 @@ function buildRulesTopicIndex(root) {
   return out;
 }
 
-// --- Existing Context Summary (ORCH-02) ---
+// --- Per-Agent Context Builders (replaces monolithic buildExistingContextSummary) ---
 
-function buildExistingContextSummary(root) {
+function buildContextForAgent(root, domains) {
   let summary = `\n# Existing Project Context — Check before creating anything new\n`;
   summary += `Before creating any new artifact, check this list. If a similar one exists, SKIP or UPDATE it instead of duplicating.\n`;
 
-  // 1. Existing rules
-  const rulesDir = resolve(root, '.claude', 'rules');
-  const localRulesDir = resolve(root, '.claude', 'rules', 'local');
-  const ruleFiles = [];
-  if (existsSync(rulesDir)) {
-    for (const f of readdirSync(rulesDir).filter(f => f.endsWith('.md'))) {
-      ruleFiles.push(`committed/${f}`);
+  if (domains.includes('rules')) {
+    const rulesDir = resolve(root, '.claude', 'rules');
+    const localRulesDir = resolve(root, '.claude', 'rules', 'local');
+    const ruleFiles = [];
+    if (existsSync(rulesDir)) {
+      for (const f of readdirSync(rulesDir).filter(f => f.endsWith('.md'))) {
+        ruleFiles.push(`committed/${f}`);
+      }
     }
-  }
-  if (existsSync(localRulesDir)) {
-    for (const f of readdirSync(localRulesDir).filter(f => f.endsWith('.md'))) {
-      ruleFiles.push(`local/${f}`);
+    if (existsSync(localRulesDir)) {
+      for (const f of readdirSync(localRulesDir).filter(f => f.endsWith('.md'))) {
+        ruleFiles.push(`local/${f}`);
+      }
     }
+    summary += `\n## Rules (${ruleFiles.length} files)\n`;
+    for (const r of ruleFiles) summary += `- ${r}\n`;
   }
-  summary += `\n## Rules (${ruleFiles.length} files)\n`;
-  for (const r of ruleFiles) summary += `- ${r}\n`;
 
-  // 2. Existing skills
-  const skills = loadExistingSkills(root);
-  summary += `\n## Skills (${skills.length} dirs)\n`;
-  for (const s of skills) summary += `- ${s.file}: ${s.description || s.name}\n`;
-
-  // 3. Existing suggestions (filename + description field or title fallback)
-  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
-  const suggestions = [];
-  if (existsSync(suggestionsDir)) {
-    for (const f of readdirSync(suggestionsDir).filter(f => f.endsWith('.md'))) {
-      const content = readFileSync(resolve(suggestionsDir, f), 'utf8');
-      const descMatch = content.match(/^## Description\n(.+)/m);
-      const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
-      suggestions.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
-    }
+  if (domains.includes('skills')) {
+    const skills = loadExistingSkills(root);
+    summary += `\n## Skills (${skills.length} dirs)\n`;
+    for (const s of skills) summary += `- ${s.file}: ${s.description || s.name}\n`;
   }
-  summary += `\n## Open Suggestions (${suggestions.length} files)\n`;
-  for (const s of suggestions) summary += `- ${s.file}${s.description ? ': ' + s.description : ''}\n`;
 
-  // 3b. Existing hygiene findings (filename + description field or title fallback)
-  const hygieneDir = resolve(root, '.claude-auto-context', 'hygiene');
-  const hygieneFiles = [];
-  if (existsSync(hygieneDir)) {
-    for (const f of readdirSync(hygieneDir).filter(f => f.endsWith('.md'))) {
-      const content = readFileSync(resolve(hygieneDir, f), 'utf8');
-      const descMatch = content.match(/^## Description\n(.+)/m);
-      const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
-      hygieneFiles.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+  if (domains.includes('suggestions')) {
+    const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
+    const suggestions = [];
+    if (existsSync(suggestionsDir)) {
+      for (const f of readdirSync(suggestionsDir).filter(f => f.endsWith('.md'))) {
+        const content = readFileSync(resolve(suggestionsDir, f), 'utf8');
+        const descMatch = content.match(/^## Description\n(.+)/m);
+        const titleMatch = content.match(/^#\s+Suggestion:\s*(.+)/m);
+        suggestions.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+      }
     }
+    summary += `\n## Open Suggestions (${suggestions.length} files)\n`;
+    for (const s of suggestions) summary += `- ${s.file}${s.description ? ': ' + s.description : ''}\n`;
   }
-  summary += `\n## Hygiene Issues (${hygieneFiles.length} files)\n`;
-  for (const h of hygieneFiles) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
 
-  // 4. Existing hooks (filename + Description: comment or title fallback)
-  const hooksDir = resolve(root, '.claude', 'hooks');
-  const hooks = [];
-  if (existsSync(hooksDir)) {
-    for (const f of readdirSync(hooksDir)) {
-      const content = readFileSync(resolve(hooksDir, f), 'utf8');
-      const descMatch = content.match(/^#\s*Description:\s*(.+)/m);
-      const titleMatch = content.match(/^#\s+\w+ hook:\s*(.+)/m);
-      hooks.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+  if (domains.includes('hooks')) {
+    const hooksDir = resolve(root, '.claude', 'hooks');
+    const hooks = [];
+    if (existsSync(hooksDir)) {
+      for (const f of readdirSync(hooksDir)) {
+        const content = readFileSync(resolve(hooksDir, f), 'utf8');
+        const descMatch = content.match(/^#\s*Description:\s*(.+)/m);
+        const titleMatch = content.match(/^#\s+\w+ hook:\s*(.+)/m);
+        hooks.push({ file: f, description: descMatch?.[1]?.trim() || titleMatch?.[1]?.trim() || '' });
+      }
     }
+    summary += `\n## Hooks (${hooks.length} files)\n`;
+    for (const h of hooks) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
   }
-  summary += `\n## Hooks (${hooks.length} files)\n`;
-  for (const h of hooks) summary += `- ${h.file}${h.description ? ': ' + h.description : ''}\n`;
 
   return summary;
 }
@@ -365,29 +419,34 @@ function buildHygienePrompt(root) {
   const rulesDir = resolve(root, '.claude', 'rules');
   const localRulesDir = resolve(root, '.claude', 'rules', 'local');
   const claudeMdPath = resolve(root, 'CLAUDE.md');
-  const hygieneDir = resolve(root, '.claude-auto-context', 'hygiene');
+  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
 
-  let committedRulesContent = '';
+  // Build lightweight topic index instead of full content embedding
+  let committedRulesIndex = '';
   if (existsSync(rulesDir)) {
     for (const entry of readdirSync(rulesDir).sort()) {
       if (!entry.endsWith('.md')) continue;
       const content = readFileSync(resolve(rulesDir, entry), 'utf8');
-      committedRulesContent += `\n### ${entry}\n\`\`\`\n${content}\n\`\`\`\n`;
+      const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+      const charCount = content.length;
+      committedRulesIndex += `- ${entry} (${charCount} chars)${descMatch ? ': ' + descMatch[1] : ''}\n`;
     }
   }
 
-  let localRulesContent = '';
+  let localRulesIndex = '';
   if (existsSync(localRulesDir)) {
     for (const entry of readdirSync(localRulesDir).sort()) {
       if (!entry.endsWith('.md')) continue;
       const content = readFileSync(resolve(localRulesDir, entry), 'utf8');
-      localRulesContent += `\n### ${entry}\n\`\`\`\n${content}\n\`\`\`\n`;
+      const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+      const charCount = content.length;
+      localRulesIndex += `- ${entry} (${charCount} chars)${descMatch ? ': ' + descMatch[1] : ''}\n`;
     }
   }
 
-  let claudeMd = '';
+  let claudeMdSize = 0;
   if (existsSync(claudeMdPath)) {
-    claudeMd = readFileSync(claudeMdPath, 'utf8');
+    claudeMdSize = readFileSync(claudeMdPath, 'utf8').length;
   }
 
   return `# Context Hygiene Check
@@ -398,7 +457,7 @@ function buildHygienePrompt(root) {
 - \`.claude/rules/*.md\` (committed team rules): READ-ONLY — analyze but never modify
 - \`CLAUDE.md\`: READ-ONLY — analyze but never modify
 - \`.claude/rules/local/*.md\` (auto-generated rules): full read/write access
-- Hygiene files in \`.claude-auto-context/hygiene/\`: create only
+- Suggestion files in \`.claude-auto-context/suggestions/\`: create only
 
 You are a context hygiene auditor. Your job is to analyze the project's
 context files (committed rules, local rules, and CLAUDE.md) for quality issues.
@@ -406,20 +465,20 @@ context files (committed rules, local rules, and CLAUDE.md) for quality issues.
 ## Input: Current Context Files
 
 ### .claude/rules/ files (committed, READ-ONLY):
-${committedRulesContent || '(none)'}
+${committedRulesIndex || '(none)'}
 
 ### .claude/rules/local/ files (auto-generated):
-${localRulesContent || '(none)'}
+${localRulesIndex || '(none)'}
 
-### CLAUDE.md (READ-ONLY):
-\`\`\`
-${claudeMd || '(empty)'}
-\`\`\`
+### CLAUDE.md (READ-ONLY): ${claudeMdSize} chars
+Use the Read tool to inspect CLAUDE.md content when needed for contradiction/duplicate checks.
+
+**IMPORTANT**: File contents are NOT embedded to save tokens. Use the Read tool to read specific files when you need to compare content for duplicate/contradiction detection. Read only the files relevant to each check.
 
 ## Your 5-Point Checklist
 
-When you find an issue, create a hygiene file at:
-\`.claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
+When you find an issue, create a suggestion file at:
+\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use current UTC time for the timestamp (e.g. hygiene-20260323-143052-stale-glob.md).
 **IMPORTANT**: Always use the \`hygiene-\` prefix. Do NOT infer a naming pattern from existing files in the directory.
@@ -466,8 +525,8 @@ Flag decayed rules so the user can confirm removal.
 
 ## Output Format
 
-Create one file per TARGET FILE (not per issue). If a rules file has multiple problems (e.g. stale globs AND verbosity), combine them into ONE hygiene file.
-\`.claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
+Create one file per TARGET FILE (not per issue). If a rules file has multiple problems (e.g. stale globs AND verbosity), combine them into ONE suggestion file.
+\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use exactly this format:
 
@@ -488,15 +547,8 @@ pending
 {description with specific file names and content excerpts}
 
 ## Proposal
-
-### Files to modify
-- {file.ext} — {what changes}
-
-### Changes
-1. {specific change description}
-
-### Acceptance criteria
-- [ ] {verifiable condition}
+{concrete fix: merge these files / remove this rule /
+ rewrite as follows / move this section to a rules file}
 
 ## Evidence
 - Source: hygiene-agent automated check
@@ -512,236 +564,128 @@ pending
 - Only report real issues. If all 5 checks pass, create no files.
 - Do NOT modify committed rules files or CLAUDE.md.
 - Read existing suggestions first to avoid duplicating pending suggestions.
-- One hygiene file per issue. Do not combine multiple issues.`;
+- One suggestion file per issue. Do not combine multiple issues.`;
 }
 
-// --- Orchestrator System Prompt (static, cacheable) ---
+// --- Batch Cache for Conditional Execution ---
 
-function buildOrchestratorSystemPrompt() {
-  // NOTE: This prompt MUST exceed 2,048 tokens for Sonnet prompt caching to activate.
-  // Claude Code's Agent SDK automatically adds cache_control markers to systemPrompt blocks.
-  // If this prompt is below the threshold, caching silently fails (no error, cache_read=0).
-  // Current estimate: ~2,500-2,900 tokens (10,105 chars). Do NOT shorten below 2,048 tokens.
-  return `You are a background orchestrator for the Auto-Context system. Your role is to analyze session event data from Claude Code sessions and delegate analysis to five specialized agents. You do NOT perform any analysis yourself — you only coordinate.
-
-## Execution Protocol
-
-1. You will receive session event data in the user message, along with a context summary of existing artifacts and a rules topic index.
-2. You MUST call ALL FIVE agents listed below, exactly once each, in any order.
-3. Do NOT skip any agent. Do NOT do the work yourself. Do NOT summarize or analyze the data.
-4. Pass the full session data context to each agent when delegating.
-5. After all five agents complete, report their results.
-
-## Agent Roster
-
-### 1. rules-agent — Institutional Memory Builder
-Extracts implicit conventions from user corrections in session data. Creates .claude/rules/local/ files following Boris Cherny's "institutional memory" pattern: past mistakes become permanent rules.
-
-**Primary data source:** "User Prompts" sections of session data.
-**Detection targets:**
-- Explicit corrections: "don't", "never", "instead use", "하지마", "안돼", "쓰지마"
-- Non-obvious commands the user typed that Claude got wrong
-- Architecture decisions stated by user: "we use X because Y"
-
-**Quality criteria (The Boris Test):** "Would removing this rule cause Claude to make mistakes?" If no, skip.
-**Rejection criteria (ETH Zurich finding):** Anything discoverable from code/config, linter-handled issues, self-evident practices, information already in CLAUDE.md. Useless rules hurt performance.
-**Output:** .claude/rules/local/{rule-name}.md with YAML frontmatter (description required, globs optional, NEVER paths).
-**Format:** Rule body under 200 chars. One rule per file. Specific trigger → specific action.
-**Path safety:** Write ONLY to project .claude/rules/local/ using absolute paths. NEVER write to ~/.claude/.
-
-### 2. suggestion-agent — Codebase Optimization Detector
-Detects AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/.
-
-**Primary data source:** "Tool Activity" sections for repeated file reads, large files, unclear naming.
-**Detection targets:**
-- Large files read repeatedly (3+ Read events across sessions) — suggest splitting
-- Unclear naming causing confusion (exploratory Read/Grep chains)
-- Missing CLAUDE.md entries that would prevent recurring mistakes
-- Poor directory structure (deep Glob/Grep chains to locate files)
-- Repeated error-fix cycles (Edit→Read→Edit pattern in same file)
-
-**Output:** .claude-auto-context/suggestions/YYYYMMDD-HHMMSS-{slug}.md
-**Quality gate:** Maximum 2 suggestions per batch. Only create with strong quantitative evidence (3+ occurrences). Must include Related Files section.
-**Deduplication:** Read existing suggestion descriptions before creating. Skip if overlapping root cause or target file.
-
-### 3. hooks-agent — Automation Pattern Detector
-Analyzes session patterns to detect repetitive manual actions and generate Claude Code hook configurations.
-
-**Primary data source:** "Tool Activity" sections — repeated tool patterns and dangerous commands.
-**Detection targets:**
-- Formatter/Linter patterns: Same lint/format command run manually after edits → PostToolUse:Edit|Write hook
-- Dangerous commands: rm -rf, git push --force, git reset --hard, DROP TABLE → PreToolUse:Bash hook with exit 2
-- Secret/credential writes: .env, .pem, .key files → PreToolUse:Write|Edit hook with exit 2
-- Test-before-stop: Test suite run at session end repeatedly → Stop hook
-
-**Judgment guidance:** Use frequency and consistency across sessions to distinguish habit from noise. Dangerous commands and secret writes warrant immediate action regardless of frequency.
-**Output:** Hook scripts in target project's .claude/hooks/ directory + settings.json update.
-**Constraints:** Maximum 1 hook per batch. NEVER modify the plugin's hooks/hooks.json. All hooks must include CAC_HOOK_RUNNING re-entry guard.
-
-### 4. skill-agent — Workflow Pattern Extractor
-Detects repeated multi-step workflows from raw session events and creates SKILL.md files in the target project's .claude/skills/.
-
-**Detection targets:** Repeated multi-step tool sequences across sessions:
-- Same tool chain appearing 2+ times (e.g., Read→Grep→Edit→Read→Bash pattern)
-- Complex workflows with 4+ steps following consistent patterns
-- Domain-specific procedures (test→fix→test, deploy→verify, migration→validate)
-
-**Necessity Gate (ALL three must be true):**
-1. Externalized Knowledge — Requires domain knowledge Claude cannot reliably do from first principles
-2. Repeatable Pattern — Executed multiple times with same structure, different inputs
-3. Context Budget Justification — Skill instructions provide value exceeding their token cost
-
-**Rejection criteria:** Read+find+fix sequences (native capability), single-file edits, debugging spirals, one-shot tasks, generic exploration.
-**Cross-artifact deduplication:** Check existing skills, CLAUDE.md, and rules for overlap before creating.
-**Output:** .claude/skills/{skill-name}/SKILL.md with frontmatter (name, description with USE WHEN trigger).
-**Constraints:** Maximum 1 skill per batch. Most sessions will NOT yield a skill.
-
-### 5. hygiene-agent — Context Quality Auditor
-Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.
-
-**Hygiene checks:**
-- H-01 Duplicate Detection: Content overlap across rules/suggestions/hooks
-- H-02 Contradiction Detection: Rules/hooks that conflict with each other
-- H-03 Stale Reference Detection: Rules referencing files/patterns that no longer exist
-- H-04 Verbosity Check: Rules exceeding 200 chars or containing discoverable-from-code info
-- H-05 Cross-Location Consistency: CLAUDE.md entries contradicting rules files
-- H-06 Priority Ordering: Critical rules with narrow globs that limit visibility
-- H-07 Convention Decay: Rules referencing non-existent patterns, 30+ days without reinforcement
-
-**Output:** .claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md
-**Constraints:** Only report real issues. If all checks pass, create no files. Do NOT modify committed rules or CLAUDE.md.
-
-## Conservative Behavior Protocol (ORCH-03)
-
-All agents share this rule: Before creating any new artifact, check the existing context summary provided in the user message. If a similar artifact already exists, agents must SKIP or UPDATE instead of duplicating. Agents log "skipped — already exists: {name}" when skipping.
-
-## Quality Standards
-
-- Every rules file MUST have YAML frontmatter with description field. Missing frontmatter = quality gate rejection.
-- Frontmatter key is globs: (NEVER paths: — paths: silently applies to ALL files).
-- Suggestions MUST include Related Files, Evidence, and Metrics sections.
-- Hook scripts MUST start with #!/bin/bash header and include # Description: comment.
-- Skills MUST pass the three-part Necessity Gate.
-- All agents must use absolute paths with the project root. NEVER use ~ or $HOME.
-
-## Sensitive File Protection Fallback
-
-If any agent's Write/Edit is blocked for .claude/ paths due to sensitive file protection, agents should fall back to Bash:
-printf '%s' "content" > /absolute/path/to/file.md
-
-## Session Data Structure
-
-The user message contains:
-1. **Session event data** — Raw tool-use events from Claude Code sessions (Glob, Read, Edit, Bash calls with parameters and results)
-2. **Existing context summary** — Current state of all rules, suggestions, hooks, and skills (for deduplication)
-3. **Rules topic index** — Index of existing rules by topic (for rules-agent overlap checking)
-
-Delegate ALL session data to each agent. Let each agent extract what is relevant to its domain.
-
-## Common Session Event Patterns to Watch For
-
-When analyzing session data, these patterns indicate high-value extraction opportunities:
-
-**For rules-agent:**
-- User types a correction twice across sessions → strong rule candidate
-- User explicitly states a prohibition ("never use X") → immediate rule
-- User demonstrates a non-obvious workflow that Claude missed → procedural rule
-
-**For suggestion-agent:**
-- Same file appears in 5+ Read events across sessions → file is too large or poorly named
-- Grep→Read→Grep→Read chains (3+ hops) → directory structure is confusing for AI
-- Edit→Read→Edit loops on same file → fragile code structure needing refactor
-
-**For hooks-agent:**
-- User runs prettier/eslint/black after every Edit → linter automation hook
-- User manually runs test suite before stopping → test-on-stop hook
-- Dangerous rm/force-push commands appearing in Bash events → blocking hook
-
-**For skill-agent:**
-- 4+ step tool chain repeated 2+ times with same structure → skill candidate
-- Multi-file coordination pattern (read config → modify source → update test → run verify) → workflow skill
-- Domain-specific procedure that requires external knowledge → strong skill candidate
-
-**For hygiene-agent:**
-- Two rules files describing the same convention with different wording → duplicate
-- Rule says "always use X" while another says "avoid X in this context" → contradiction
-- Rule references a file path or pattern that Glob cannot find → stale reference
-
-## Inter-Agent Coordination
-
-- rules-agent and hooks-agent may detect overlapping patterns. A linting command run manually should become a hook (automation), NOT a rule (instruction).
-- suggestion-agent creates files in suggestions/; hygiene-agent creates files in hygiene/. suggestion-agent creates structural improvement proposals; hygiene-agent creates cleanup proposals for existing context artifacts.
-- skill-agent should verify its candidates don't overlap with existing rules or CLAUDE.md entries before creating.
-
-## Cost Awareness
-
-Each agent session consumes API tokens. Agents should be efficient: read only what is necessary, avoid exploratory searches when the answer is in the provided context summary, and produce output only when there is genuine signal. Creating zero artifacts is a valid and often correct outcome.
-
-Call all five agents now.`;
+function initBatchCache(db) {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS batch_cache (
+      key       TEXT PRIMARY KEY,
+      value     TEXT,
+      hash      TEXT,
+      updated   TEXT DEFAULT (datetime('now'))
+    )
+  `);
 }
 
-const ORCHESTRATOR_SYSTEM_PROMPT = buildOrchestratorSystemPrompt();
-log(`orchestrator-system-prompt: length=${ORCHESTRATOR_SYSTEM_PROMPT.length} hash=${Array.from(new Uint8Array(new TextEncoder().encode(ORCHESTRATOR_SYSTEM_PROMPT).slice(0, 64))).reduce((h, b) => ((h << 5) - h + b) | 0, 0).toString(16)}`);
+function getCacheEntry(db, key) {
+  return db.prepare(`SELECT value, hash FROM batch_cache WHERE key = ?`).get(key);
+}
+
+function setCacheEntry(db, key, value, hash) {
+  db.run(`
+    INSERT INTO batch_cache (key, value, hash, updated)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, hash=excluded.hash, updated=excluded.updated
+  `, [key, value, hash]);
+}
+
+function hashContent(content) {
+  const hasher = new Bun.CryptoHasher('md5');
+  hasher.update(content);
+  return hasher.digest('hex');
+}
+
+function computeRulesHash(root) {
+  const rulesDir = resolve(root, '.claude', 'rules');
+  const localRulesDir = resolve(root, '.claude', 'rules', 'local');
+  const claudeMdPath = resolve(root, 'CLAUDE.md');
+  let combined = '';
+
+  for (const dir of [rulesDir, localRulesDir]) {
+    if (existsSync(dir)) {
+      for (const f of readdirSync(dir).filter(f => f.endsWith('.md')).sort()) {
+        combined += readFileSync(resolve(dir, f), 'utf8');
+      }
+    }
+  }
+  if (existsSync(claudeMdPath)) {
+    combined += readFileSync(claudeMdPath, 'utf8');
+  }
+
+  return hashContent(combined);
+}
+
+function shouldRunAgent(agentName, events, db) {
+  switch (agentName) {
+    case 'hygiene-agent': {
+      const currentHash = computeRulesHash(projectRoot);
+      const cached = getCacheEntry(db, 'hygiene_hash');
+      if (cached && cached.hash === currentHash) {
+        log(`skip hygiene-agent: rules unchanged (hash=${currentHash.slice(0, 8)})`);
+        return false;
+      }
+      return true;
+    }
+    case 'hooks-agent': {
+      const hasMutations = events.some(e =>
+        ['Edit', 'Write', 'Bash', 'NotebookEdit'].includes(e.tool_name)
+      );
+      if (!hasMutations) {
+        log(`skip hooks-agent: no mutation events in batch`);
+        return false;
+      }
+      return true;
+    }
+    case 'suggestion-agent': {
+      const hasUserPrompts = events.some(e => e.hook_type === 'UserPromptSubmit');
+      if (!hasUserPrompts) {
+        log(`skip suggestion-agent: no UserPromptSubmit events`);
+        return false;
+      }
+      return true;
+    }
+    case 'skill-agent': {
+      if (events.length < 20) {
+        log(`skip skill-agent: only ${events.length} events (min 20)`);
+        return false;
+      }
+      return true;
+    }
+    default:
+      return true;
+  }
+}
 
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
+  initBatchCache(db);
+
   const { prompt: bulkPrompt, includedIds } = buildBulkPrompt(events);
-  const rulesTopicIndex = buildRulesTopicIndex(projectRoot);
-  const existingContextSummary = buildExistingContextSummary(projectRoot);
 
-  // ① Snapshot context files (full content) before orchestrator
-  const snapshotBefore = takeContentSnapshot(projectRoot);
+  // Cache rulesTopicIndex — skip file I/O if rules haven't changed
+  const rulesHash = computeRulesHash(projectRoot);
+  const cachedIndex = getCacheEntry(db, 'rules_topic_index');
+  let rulesTopicIndex;
+  if (cachedIndex && cachedIndex.hash === rulesHash) {
+    rulesTopicIndex = cachedIndex.value;
+    log('cache hit: rules_topic_index');
+  } else {
+    rulesTopicIndex = buildRulesTopicIndex(projectRoot);
+    setCacheEntry(db, 'rules_topic_index', rulesTopicIndex, rulesHash);
+  }
 
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), AGENT_TIMEOUT_MS);
+  // Build agents object conditionally — only include agents that pass shouldRunAgent
+  const agents = {};
 
-  try {
-    const result = query({
-      prompt: `${bulkPrompt}\n\n${existingContextSummary}\n\n${rulesTopicIndex}`,
-      options: {
-        systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-        model: 'sonnet',
-        cwd: projectRoot,
-        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Bash', 'Task'],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        abortController: ac,
-        maxTurns: 25,
-        maxBudgetUsd: 2.00,
-        persistSession: false,
-        settingSources: ['project'],
-        stderr: (data) => log(`[stderr] ${data}`),
-        agents: {
-          "rules-agent": {
-            description: "Extract implicit conventions from user corrections in session data. Creates .claude/rules/ files following Boris Cherny's 'institutional memory' pattern: past mistakes become permanent rules.",
-            prompt: `${existingContextSummary}
-
-## CRITICAL: Output Path
-Write rules ONLY to: ${projectRoot}/.claude/rules/local/
-Use absolute paths. NEVER write to ~/.claude/ or any path outside the project.
-
-## CRITICAL: File Format (every rule file MUST follow this exactly)
-\`\`\`
----
-description: "One-line summary of what this rule prevents"
-globs: ["**/*.ts", "src/**"]     # OPTIONAL — omit for project-wide rules
----
-
-[Rule body — under 200 chars. Specific trigger → specific action.]
-\`\`\`
-
-FRONTMATTER RULES:
-- \`description:\` is REQUIRED in every file.
-- \`globs:\` is OPTIONAL. Use it only for file-pattern-specific rules. Omit entirely for project-wide rules.
-- NEVER use \`paths:\` — it silently applies the rule to ALL files regardless of the value. Always use \`globs:\`.
-- Files missing the \`---\` block or \`description:\` field are INVALID and will be rejected by the quality gate.
-
-## Conservative Behavior (ORCH-03)
-Before creating any new rule, check the context summary above.
-If a similar artifact already exists, SKIP or UPDATE. Log "skipped — already exists: {name}".
-
-## Your Role: Institutional Memory Builder
+  if (shouldRunAgent('rules-agent', events, db)) {
+    const rulesContext = buildContextForAgent(projectRoot, ['rules', 'skills']);
+    agents['rules-agent'] = {
+      description: "Extract implicit conventions from user corrections in session data. Creates .claude/rules/ files following Boris Cherny's 'institutional memory' pattern: past mistakes become permanent rules.",
+      prompt: `## Your Role: Institutional Memory Builder
 You turn user corrections into permanent rules (Boris Cherny pattern).
 When a user says "don't do X" or "use Y instead", that correction becomes a rule so Claude never repeats the mistake.
 
@@ -768,30 +712,32 @@ For every candidate: "Would removing this rule cause Claude to make mistakes?"
 - BAD: 500 chars explaining Result type history
 - GOOD: "Error handling: Result<T,E>, not try-catch. Return {ok, error} shape."
 
-If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash:
-printf '%s' "content" > ${projectRoot}/.claude/rules/local/rule-name.md
-NEVER use ~ or $HOME in the path. The absolute path above is the ONLY correct target.
+If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
 
 Follow the extract-rules skill instructions for output format and procedure.
-${rulesTopicIndex}
 
 ## Description maintenance
 Rules listed "Without description — local": Read and add description: field.
-Rules listed "Without description — committed": Read for context, do NOT modify.`,
-            tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
-            skills: ['extract-rules'],
-            maxTurns: 15,
-          },
-          "suggestion-agent": {
-            description: "Detect AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/ with related file lists and quantitative evidence.",
-            prompt: `${existingContextSummary}
+Rules listed "Without description — committed": Read for context, do NOT modify.
 
 ## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
-If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
-Log "skipped — already exists: {name}" when you skip.
+Before creating any new rule, check the context summary above.
+If a similar artifact already exists, SKIP or UPDATE. Log "skipped — already exists: {name}".
 
-You are a codebase optimization agent. Analyze the session data provided by the orchestrator to detect AI-unfriendly code patterns.
+--- Dynamic Context ---
+${rulesContext}
+${rulesTopicIndex}`,
+      tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
+      skills: ['extract-rules'],
+      maxTurns: 15,
+    };
+  }
+
+  if (shouldRunAgent('suggestion-agent', events, db)) {
+    const suggestionContext = buildContextForAgent(projectRoot, ['suggestions', 'rules']);
+    agents['suggestion-agent'] = {
+      description: "Detect AI-unfriendly code patterns and structural issues from session data. Creates proposal files in .claude-auto-context/suggestions/ with related file lists and quantitative evidence.",
+      prompt: `You are a codebase optimization agent. Analyze the session data provided by the orchestrator to detect AI-unfriendly code patterns.
 
 ## What to detect (SUGG-01, SUGG-02)
 
@@ -845,21 +791,26 @@ pending
 - Before creating a suggestion, READ the Description of each existing suggestion in the context summary. If your finding overlaps with an existing suggestion (same root cause or same target file), SKIP it. Log "skipped — overlaps with: {existing title}"
 - Maximum 2 suggestions per batch to avoid noise. The quality gate will reject suggestions beyond 10 total pending.
 - Only create suggestions with strong quantitative evidence (3+ occurrences)
-- If the quality gate rejects your suggestion as a duplicate, that is correct behavior — do not retry`,
-            tools: ['Read', 'Write', 'Glob', 'Bash'],
-            skills: ['create-suggestion'],
-            maxTurns: 20,
-          },
-          "hooks-agent": {
-            description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
-            prompt: `${existingContextSummary}
+- If the quality gate rejects your suggestion as a duplicate, that is correct behavior — do not retry
 
 ## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+Before creating any new suggestion, check the context summary below.
 If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
 Log "skipped — already exists: {name}" when you skip.
 
-You analyze session data to detect patterns that should become automated hooks.
+--- Dynamic Context ---
+${suggestionContext}`,
+      tools: ['Read', 'Write', 'Glob', 'Bash'],
+      skills: ['create-suggestion'],
+      maxTurns: 20,
+    };
+  }
+
+  if (shouldRunAgent('hooks-agent', events, db)) {
+    const hooksContext = buildContextForAgent(projectRoot, ['hooks']);
+    agents['hooks-agent'] = {
+      description: "Analyze session patterns to detect repetitive manual actions and generate Claude Code hook configurations. Covers linting/formatting automation, dangerous command blocking, and test auto-execution.",
+      prompt: `You analyze session data to detect patterns that should become automated hooks.
 
 ## What to detect
 
@@ -887,28 +838,31 @@ Every hook script MUST start with this exact header pattern:
 The \`# Description:\` line is mandatory. It is parsed by the orchestrator for context summaries.
 
 ## Output rules
-- If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash:
-  printf '%s' "content" > ${projectRoot}/.claude/hooks/hook-name.sh
-  NEVER use ~ or $HOME in the path. The absolute path above is the ONLY correct target.
+- If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
 - Write hook scripts to target project's .claude/hooks/ directory
 - Update target project's .claude/settings.json (read -> parse -> merge -> write)
 - NEVER modify the plugin's hooks/hooks.json
 - All PostToolUse/Stop hooks must include CAC_HOOK_RUNNING re-entry guard
 - Hook scripts must use static command strings only (no dynamic session data injection)
-- Maximum 1 hook per batch to avoid hook accumulation`,
-            tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
-            maxTurns: 20,
-          },
-          "skill-agent": {
-            description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
-            prompt: `${existingContextSummary}
+- Maximum 1 hook per batch to avoid hook accumulation
 
 ## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+Before creating any new hook, check the context summary below.
 If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
 Log "skipped — already exists: {name}" when you skip.
 
-You are a skill extraction agent. Analyze the raw session events provided by the orchestrator to detect repeated multi-step workflows that deserve to become reusable skills.
+--- Dynamic Context ---
+${hooksContext}`,
+      tools: ['Read', 'Write', 'Edit', 'Glob', 'Bash'],
+      maxTurns: 20,
+    };
+  }
+
+  if (shouldRunAgent('skill-agent', events, db)) {
+    const skillContext = buildContextForAgent(projectRoot, ['skills']);
+    agents['skill-agent'] = {
+      description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
+      prompt: `You are a skill extraction agent. Analyze the raw session events provided by the orchestrator to detect repeated multi-step workflows that deserve to become reusable skills.
 
 ## What to detect (SKIL-02)
 
@@ -933,9 +887,7 @@ If a candidate fails: log "SKIP: {pattern} — {reason}" and create nothing.
 
 ## Output: SKILL.md Format (SKIL-03)
 
-If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash:
-printf '%s' "content" > ${projectRoot}/.claude/skills/skill-name/SKILL.md
-NEVER use ~ or $HOME in the path. The absolute path above is the ONLY correct target.
+If Write/Edit is blocked for .claude/ paths (sensitive file protection), use Bash: printf '%s' "content" > filepath
 
 Create SKILL.md in the target project's .claude/skills/ directory only:
 - \`.claude/skills/{skill-name}/SKILL.md\`
@@ -966,64 +918,146 @@ description: {one-line description}. USE WHEN {trigger phrase}.
 - Do NOT {common misuse}
 \`\`\`
 
-## Cross-Artifact Deduplication (SKIL-04)
+## Deduplication (SKIL-04)
 
-Before creating a skill, check ALL of these for overlap — not just existing skills:
-1. **Existing skills** in the "Skills" section of the context summary above
-2. **CLAUDE.md** — constraint tables, architecture sections, convention docs
-3. **Rules** in \`.claude/rules/local/\` — behavioral guardrails already enforced
-
-If a constraint, anti-pattern, or guardrail already exists in CLAUDE.md or rules:
-- Do NOT duplicate it in the skill. Write \`See CLAUDE.md: {section name}\` instead.
-- The skill should contain ONLY the procedure (step ordering, tool chain) that is NOT documented elsewhere.
-
-## Path Verification (SKIL-05)
-
-Before referencing any file path in a skill, verify it exists with Glob or ls.
-Do NOT write paths from memory — wrong paths make the skill actively harmful.
+Check the "Skills" section in the context summary above. Do NOT create a skill that overlaps with any existing skill by name or workflow purpose.
 
 ## Rules
 - Maximum 1 skill per batch. Pick the strongest candidate.
 - If no candidate passes the Necessity Gate, create nothing. Most sessions will NOT yield a skill.
 - Use concrete tool names and file patterns from the session data, not generic placeholders.
-- Anti-Patterns section is OPTIONAL. Only include if the anti-pattern is novel (not in CLAUDE.md/rules).`,
-            tools: ['Read', 'Write', 'Glob', 'Bash'],
-            maxTurns: 20,
-          },
-          "hygiene-agent": {
-            description: "Context quality auditor. Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.",
-            prompt: `${existingContextSummary}
 
 ## Conservative Behavior (ORCH-03)
-Before creating any new rule, suggestion, hook, or skill, check the context summary above.
+Before creating any new skill, check the context summary below.
 If a similar artifact already exists, SKIP creation or UPDATE the existing one instead of duplicating.
 Log "skipped — already exists: {name}" when you skip.
 
-${buildHygienePrompt(projectRoot)}`,
-            tools: ['Read', 'Write', 'Glob', 'Bash'],
-            skills: ['context-hygiene'],
-            maxTurns: 15,
-          },
-        },
+--- Dynamic Context ---
+${skillContext}`,
+      tools: ['Read', 'Write', 'Glob', 'Bash'],
+      maxTurns: 20,
+    };
+  }
+
+  if (shouldRunAgent('hygiene-agent', events, db)) {
+    agents['hygiene-agent'] = {
+      description: "Context quality auditor. Checks rules, hooks, and suggestions for duplicates, contradictions, stale references, verbosity, and priority placement issues.",
+      prompt: `${buildHygienePrompt(projectRoot)}`,
+      tools: ['Read', 'Write', 'Glob', 'Bash'],
+      skills: ['context-hygiene'],
+      maxTurns: 15,
+    };
+  }
+
+  // If no agents to run, skip the entire query() call
+  if (Object.keys(agents).length === 0) {
+    log('skip batch: no agents need to run');
+    return includedIds;
+  }
+
+  // Build dynamic orchestrator prompt based on active agents
+  const agentDescriptions = [];
+  let idx = 1;
+  if (agents['rules-agent']) agentDescriptions.push(`${idx++}. rules-agent — Repeated conventions\n   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.\n   Note: rules-agent now writes to .claude/rules/local/. Rules without globs: frontmatter apply project-wide.`);
+  if (agents['suggestion-agent']) agentDescriptions.push(`${idx++}. suggestion-agent — AI-unfriendly code patterns and structural issues\n   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.`);
+  if (agents['hooks-agent']) agentDescriptions.push(`${idx++}. hooks-agent — Detect repetitive manual actions and generate hook configurations\n   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.`);
+  if (agents['skill-agent']) agentDescriptions.push(`${idx++}. skill-agent — Detect repeated multi-step workflows and create SKILL.md files\n   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.`);
+  if (agents['hygiene-agent']) agentDescriptions.push(`${idx++}. hygiene-agent — Context quality audit\n   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.`);
+
+  const agentCount = Object.keys(agents).length;
+  const orchestratorPrompt = `${bulkPrompt}
+You are an orchestrator. Analyze the above session data and delegate to ALL ${agentCount} agents below.
+You MUST call each agent exactly once. Do NOT skip any agent. Do NOT do the work yourself.
+
+${agentDescriptions.join('\n')}
+
+Call all ${agentCount} agents now.`;
+
+  log(`batch: running ${agentCount} agents: ${Object.keys(agents).join(', ')}`);
+
+  // ① Snapshot context files (full content) before orchestrator
+  const snapshotBefore = takeContentSnapshot(projectRoot);
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), AGENT_TIMEOUT_MS);
+
+  try {
+    const result = query({
+      prompt: orchestratorPrompt,
+      options: {
+        model: 'sonnet',
+        cwd: projectRoot,
+        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Bash', 'Task'],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        abortController: ac,
+        maxTurns: 25,
+        maxBudgetUsd: 2.00,
+        persistSession: false,
+        settingSources: ['project'],
+        stderr: (data) => log(`[stderr] ${data}`),
+        agents,
       }
     });
 
     for await (const message of result) {
       if (message.type === 'result') {
         const denials = message.permission_denials?.length ?? 0;
-        const cacheRead = message.usage?.cache_read_input_tokens ?? 0;
-        const cacheCreate = message.usage?.cache_creation_input_tokens ?? 0;
-        log(`agent-batch session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} cache_read=${cacheRead} cache_create=${cacheCreate} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
+        log(`agent-batch session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
         if (denials > 0) {
           log(`agent-batch WARNING: ${denials} permission denial(s) detected — check settings.json permissions`);
         }
       }
     }
+
+    // Update hygiene hash cache after successful batch
+    setCacheEntry(db, 'hygiene_hash', '', computeRulesHash(projectRoot));
   } finally {
     clearTimeout(timer);
   }
 
-  // ② Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
+  // ② Convention Decay — revalidate stale rules
+  const staleRules = getStaleRules(projectRoot);
+  if (staleRules.length > 0) {
+    log(`decay: ${staleRules.length} rules need revalidation`);
+
+    const decayAc = new AbortController();
+    const decayTimer = setTimeout(() => decayAc.abort(), AGENT_TIMEOUT_MS);
+
+    try {
+      const decayPrompt = buildDecayPrompt(staleRules);
+      const decayResult = query({
+        prompt: decayPrompt,
+        options: {
+          model: 'sonnet',
+          cwd: projectRoot,
+          allowedTools: ['Read', 'Edit', 'Glob', 'Bash'],
+          permissionMode: 'bypassPermissions',
+          allowDangerouslySkipPermissions: true,
+          abortController: decayAc,
+          maxTurns: 10,
+          maxBudgetUsd: 0.50,
+          persistSession: false,
+          settingSources: ['project'],
+          stderr: (data) => log(`[decay-stderr] ${data}`),
+        }
+      });
+
+      for await (const message of decayResult) {
+        if (message.type === 'result') {
+          log(`decay ${message.subtype}: ${message.result?.slice(0, 200) ?? ''}`);
+        }
+      }
+    } catch (err) {
+      log(`decay: failed (non-fatal): ${err.message}`);
+    } finally {
+      clearTimeout(decayTimer);
+    }
+  } else {
+    log('decay: no stale rules found');
+  }
+
+  // ③ Quality Gate — evaluate agent output, auto-fix or revert low-quality changes
   // Runs independently from batch confirmation so a gate failure does not
   // trigger an expensive re-processing of the entire LLM batch.
   try {
@@ -1041,20 +1075,6 @@ ${buildHygienePrompt(projectRoot)}`,
             r.reverted ? 1 : 0);
         }
       })();
-
-      // Write notifications manifest for SessionStart hook
-      const created = gate.results
-        .filter(r => r.action === 'created' && r.verdict === 'pass' && !r.reverted)
-        .map(r => relative(projectRoot, r.filePath));
-      if (created.length > 0) {
-        const notifPath = resolve(projectRoot, '.claude-auto-context', 'notifications.json');
-        try {
-          writeFileSync(notifPath, JSON.stringify({ created, ts: new Date().toISOString() }, null, 2));
-          log(`notifications: ${created.length} new file(s) written to notifications.json`);
-        } catch (err) {
-          log(`notifications: failed to write notifications.json — ${err.message}`);
-        }
-      }
     }
   } catch (err) {
     log(`quality-gate: failed (non-fatal): ${err.message}`);
@@ -1093,7 +1113,6 @@ async function main() {
   // Ensure output directories exist
   mkdirSync(resolve(projectRoot, '.claude', 'rules', 'local'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
-  mkdirSync(resolve(projectRoot, '.claude-auto-context', 'hygiene'), { recursive: true });
 
   // Ensure .claude/settings.json exists so sub-agents have Write permission for rules/suggestions
   const settingsPath = resolve(projectRoot, '.claude', 'settings.json');
@@ -1102,14 +1121,8 @@ async function main() {
       writeFileSync(settingsPath, JSON.stringify({
         permissions: {
           allow: [
-            "Read(.claude/**)",
-            "Write(.claude/rules/local/**)",
-            "Edit(.claude/rules/local/**)",
-            "Write(.claude/skills/**)",
-            "Edit(.claude/skills/**)",
-            "Write(.claude-auto-context/suggestions/**)",
-            "Write(.claude-auto-context/hygiene/**)",
-            "Write(.claude-auto-context/skill-prompts/**)"
+            ".claude/rules/local/**",
+            ".claude-auto-context/suggestions/**"
           ]
         }
       }, null, 2));

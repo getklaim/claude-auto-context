@@ -123,15 +123,31 @@ process.stdin.on('end', () => {
       storedPayload = JSON.stringify(payload).slice(0, 2000);
     }
 
+    // Dedup: for Edit/Write on same file in same session, replace previous pending event
+    // This prevents bulk prompt bloat from repeated edits to the same file
+    const sessionId = payload.session_id ?? 'unknown';
+    const toolName = payload.tool_name ?? null;
+
+    if (hookType === 'PostToolUse' && (toolName === 'Edit' || toolName === 'Write')) {
+      const filePath = (payload.tool_input || {}).file_path || null;
+      if (filePath) {
+        db.run(`
+          DELETE FROM raw_events
+          WHERE session_id = ? AND tool_name = ? AND status = 'pending'
+            AND json_extract(payload, '$.file_path') = ?
+        `, [sessionId, toolName, filePath]);
+      }
+    }
+
     const stmt = db.prepare(`
       INSERT INTO raw_events (session_id, timestamp, hook_type, tool_name, payload)
       VALUES (?, datetime('now'), ?, ?, ?)
     `);
 
     stmt.run(
-      payload.session_id ?? 'unknown',
+      sessionId,
       hookType,
-      payload.tool_name ?? null,
+      toolName,
       storedPayload
     );
 
