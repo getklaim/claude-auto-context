@@ -28,6 +28,7 @@ scripts/split-analyses.py
 docs/
 research/
 test/**
+Test/
 .DS_Store
 .omc/
 .planning/
