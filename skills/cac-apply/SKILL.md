@@ -171,7 +171,9 @@ PRE_EXISTING_FAILURES: {comma-separated list or "none"}
 
 ---
 
-## Phase 4: QA (cac-qa Agent)
+## Phase 4: QA (cac-qa Agent) — MANDATORY SPAWN
+
+**CRITICAL: You MUST spawn the cac-qa agent as a separate agent. Do NOT verify acceptance criteria yourself. Do NOT skip this phase. Do NOT perform QA inline. The entire point of this architecture is independent verification by a separate agent that did not see the executor's reasoning. If you verify inline, the executor/QA separation is defeated and this skill provides no value over the old single-agent approach.**
 
 Spawn the cac-qa agent. Two methods (try in order):
 
@@ -345,7 +347,7 @@ If applying multiple items:
 
 - Do NOT apply suggestions without structured format (Read first, Files to modify, Changes, Impact, Acceptance criteria)
 - Do NOT skip the Read first gate
-- Do NOT self-verify — always use cac-qa agent for independent verification
+- Do NOT self-verify — ALWAYS spawn cac-qa agent for independent verification. NEVER check acceptance criteria yourself in Phase 4. This is the #1 anti-pattern that defeats the entire multi-agent architecture
 - Do NOT batch all changes into one commit
 - Do NOT exceed 3 iteration cycles — rollback and report failure
 - Do NOT modify the suggestion's Problem/Evidence sections
