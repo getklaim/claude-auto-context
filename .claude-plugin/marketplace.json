@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Auto Context plugin marketplace",
-    "version": "1.6.5"
+    "version": "1.6.6"
   },
   "plugins": [
     {
       "name": "claude-auto-context",
       "source": "./",
       "description": "Automatic context engineering — observes your coding sessions and generates rules, suggestions, skills, and hooks so Claude gets smarter on your codebase over time",
-      "version": "1.6.5",
+      "version": "1.6.6",
       "author": {
         "name": "getklaim"
       },

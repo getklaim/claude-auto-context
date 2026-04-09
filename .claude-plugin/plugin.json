@@ -1,6 +1,6 @@
 {
   "name": "claude-auto-context",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "description": "Automatic context engineering — observes your coding sessions and generates rules, suggestions, skills, and hooks so Claude gets smarter on your codebase over time",
   "author": {
     "name": "getklaim"

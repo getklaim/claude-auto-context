@@ -1334,14 +1334,30 @@ async function main() {
   log('startup: recovered any orphaned processing events');
 
   // Check pending event count — skip if below threshold
+  // Trigger: pending >= 300 OR (pending >= 100 AND oldest pending > 1 hour)
+  const BATCH_THRESHOLD = 300;
+  const TIME_THRESHOLD = 100;
+  const AGE_THRESHOLD_MS = 3600_000; // 1 hour
   const { cnt } = db.prepare(`SELECT COUNT(*) as cnt FROM raw_events WHERE status='pending'`).get();
-  if (cnt < 100) {
-    log(`threshold: ${cnt} pending events < 100, skipping batch`);
+  if (cnt < TIME_THRESHOLD) {
+    log(`threshold: ${cnt} pending events < ${TIME_THRESHOLD}, skipping batch`);
     db.close();
     cleanup();
     return;
   }
-  log(`threshold: ${cnt} pending events >= 100, proceeding`);
+  if (cnt < BATCH_THRESHOLD) {
+    const row = db.prepare(`SELECT MIN(timestamp) as oldest FROM raw_events WHERE status='pending'`).get();
+    const ageMs = Date.now() - new Date(row.oldest + 'Z').getTime();
+    if (ageMs < AGE_THRESHOLD_MS) {
+      log(`threshold: ${cnt} pending events, oldest ${Math.round(ageMs/1000)}s < 3600s, skipping batch`);
+      db.close();
+      cleanup();
+      return;
+    }
+    log(`threshold: ${cnt} pending events, oldest ${Math.round(ageMs/1000)}s >= 3600s, time-triggered`);
+  } else {
+    log(`threshold: ${cnt} pending events >= ${BATCH_THRESHOLD}, proceeding`);
+  }
 
   try {
     const batch = claimBatch(db);
