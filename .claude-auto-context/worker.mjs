@@ -1106,7 +1106,7 @@ Call all ${agentCount} agents now.`;
         allowDangerouslySkipPermissions: true,
         abortController: ac,
         maxTurns: 25,
-        maxBudgetUsd: 2.00,
+        maxBudgetUsd: 5.00,
         persistSession: false,
         settingSources: [],
         stderr: (data) => log(`[stderr] ${data}`),
@@ -1120,6 +1120,31 @@ Call all ${agentCount} agents now.`;
         log(`agent-batch session=${message.session_id ?? 'unknown'} turns=${message.num_turns ?? '?'} cost=$${message.total_cost_usd ?? '?'} denials=${denials} subtype=${message.subtype} result=${message.result?.slice(0, 500) ?? ''}`);
         if (denials > 0) {
           log(`agent-batch WARNING: ${denials} permission denial(s) detected — check settings.json permissions`);
+        }
+      } else {
+        // Detailed per-message logging to trace agent activity and cost drivers
+        const mtype = message.type ?? 'unknown';
+        if (mtype === 'assistant') {
+          const content = message.message?.content ?? [];
+          for (const block of content) {
+            if (block.type === 'tool_use') {
+              log(`  [TRACE] assistant→tool_use: ${block.name} ${JSON.stringify(block.input ?? {}).slice(0, 300)}`);
+            } else if (block.type === 'text') {
+              log(`  [TRACE] assistant→text: ${(block.text ?? '').slice(0, 200)}`);
+            }
+          }
+        } else if (mtype === 'user') {
+          const content = message.message?.content ?? [];
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === 'tool_result') {
+                const resultText = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
+                log(`  [TRACE] tool_result(${block.tool_use_id?.slice(-8) ?? '?'}): ${resultText.slice(0, 200)}`);
+              }
+            }
+          }
+        } else {
+          log(`  [TRACE] ${mtype}: ${JSON.stringify(message).slice(0, 200)}`);
         }
       }
     }
