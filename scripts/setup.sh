@@ -4,11 +4,17 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check/install bun
+# Check bun availability (native or via npx)
 if ! command -v bun &> /dev/null; then
-  curl -fsSL https://bun.sh/install | bash 2>/dev/null
-  export BUN_INSTALL="$HOME/.bun"
-  export PATH="$BUN_INSTALL/bin:$PATH"
+  if command -v npx &> /dev/null; then
+    echo "[auto-context] Bun not found. Using npx bun as fallback (first run may take a moment)."
+    echo "  For faster performance, install Bun directly: curl -fsSL https://bun.sh/install | bash"
+    # Pre-warm npx cache so subsequent calls are instant
+    npx -y bun --version > /dev/null 2>&1 || true
+  else
+    echo "[auto-context] Warning: Neither bun nor npx found. Background worker will not function."
+    echo "  Install Bun: curl -fsSL https://bun.sh/install | bash"
+  fi
 fi
 
 # Warn if jq is missing (needed for bump-version.sh)

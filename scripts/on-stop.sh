@@ -12,7 +12,17 @@ BATCH_THRESHOLD=100
 
 DB_PATH="$PROJECT_DIR/.claude-auto-context/db/claude-auto-context.db"
 if [ -f "$DB_PATH" ]; then
-  COUNT=$(bun -e "import{Database}from'bun:sqlite';try{const d=new Database('$DB_PATH',{readonly:true});console.log(d.prepare('SELECT count(*)as c FROM raw_events WHERE status=?').get('pending').c);d.close()}catch{console.log(0)}" 2>/dev/null || echo "0")
+  # Resolve bun command: native or npx fallback
+  if command -v bun &>/dev/null; then
+    _BUN="bun"
+  elif command -v npx &>/dev/null; then
+    _BUN="npx -y bun"
+  else
+    COUNT=0
+  fi
+  if [ -z "${COUNT:-}" ]; then
+    COUNT=$($_BUN -e "import{Database}from'bun:sqlite';try{const d=new Database('$DB_PATH',{readonly:true});console.log(d.prepare('SELECT count(*)as c FROM raw_events WHERE status=?').get('pending').c);d.close()}catch{console.log(0)}" 2>/dev/null || echo "0")
+  fi
   if [ "$COUNT" -ge "$BATCH_THRESHOLD" ]; then
     "$PLUGIN_ROOT/scripts/worker-launcher.sh" "$PROJECT_DIR" &
   fi

@@ -28,9 +28,22 @@ has_jq() {
   command -v jq &>/dev/null
 }
 
+# Resolve bun command: native bun if available, otherwise npx -y bun
+resolve_bun() {
+  if has_bun; then
+    echo "bun"
+  elif command -v npx &>/dev/null; then
+    echo "npx -y bun"
+  else
+    echo ""
+  fi
+}
+
+BUN_CMD=$(resolve_bun)
+
 check_deps() {
   local missing=()
-  has_bun || missing+=("bun")
+  [ -z "$BUN_CMD" ] && missing+=("bun (or npx)")
   has_jq || missing+=("jq")
 
   if [ ${#missing[@]} -gt 0 ]; then
@@ -43,9 +56,9 @@ check_deps() {
 # Run collector safely
 run_collector() {
   local event="$1"
-  if has_bun; then
-    bun "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" "$event" 2>/dev/null || true
+  if [ -n "$BUN_CMD" ]; then
+    $BUN_CMD "$PLUGIN_ROOT/.claude-auto-context/collector.mjs" "$event" 2>/dev/null || true
   else
-    log_error "bun not found, skipping collector for $event"
+    log_error "bun/npx not found, skipping collector for $event"
   fi
 }

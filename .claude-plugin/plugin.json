@@ -1,15 +1,20 @@
 {
   "name": "claude-auto-context",
-  "version": "1.5.3",
-  "description": "Hook interceptor plugin that captures and logs all Claude Code lifecycle events",
+  "version": "1.5.4",
+  "description": "Automatic context engineering — observes your coding sessions and generates rules, suggestions, skills, and hooks so Claude gets smarter on your codebase over time",
   "author": {
     "name": "getklaim"
   },
   "license": "MIT",
   "keywords": [
+    "context",
+    "auto-context",
+    "rules",
+    "conventions",
+    "suggestions",
+    "skills",
     "hooks",
-    "interceptor",
-    "logging",
-    "lifecycle"
+    "agent-sdk",
+    "background-worker"
   ]
 }

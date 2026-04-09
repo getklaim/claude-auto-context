@@ -39,6 +39,13 @@ export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 export HOME="${HOME:-$(eval echo ~$(whoami))}"
 export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 unset CLAUDECODE
-nohup bun "$PLUGIN_ROOT/.claude-auto-context/worker.mjs" >> "$LOG_FILE" 2>&1 &
+
+# Resolve bun: native if available, npx fallback otherwise
+if command -v bun &>/dev/null; then
+  BUN_CMD="bun"
+else
+  BUN_CMD="npx -y bun"
+fi
+nohup $BUN_CMD "$PLUGIN_ROOT/.claude-auto-context/worker.mjs" >> "$LOG_FILE" 2>&1 &
 
 exit 0
