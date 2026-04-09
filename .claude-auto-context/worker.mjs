@@ -419,7 +419,8 @@ function buildHygienePrompt(root) {
   const rulesDir = resolve(root, '.claude', 'rules');
   const localRulesDir = resolve(root, '.claude', 'rules', 'local');
   const claudeMdPath = resolve(root, 'CLAUDE.md');
-  const suggestionsDir = resolve(root, '.claude-auto-context', 'suggestions');
+  const hygieneDir = resolve(root, '.claude-auto-context', 'hygiene');
+  mkdirSync(hygieneDir, { recursive: true });
 
   // Build lightweight topic index instead of full content embedding
   let committedRulesIndex = '';
@@ -457,7 +458,7 @@ function buildHygienePrompt(root) {
 - \`.claude/rules/*.md\` (committed team rules): READ-ONLY — analyze but never modify
 - \`CLAUDE.md\`: READ-ONLY — analyze but never modify
 - \`.claude/rules/local/*.md\` (auto-generated rules): full read/write access
-- Suggestion files in \`.claude-auto-context/suggestions/\`: create only
+- Hygiene files in \`.claude-auto-context/hygiene/\`: create only
 
 You are a context hygiene auditor. Your job is to analyze the project's
 context files (committed rules, local rules, and CLAUDE.md) for quality issues.
@@ -478,7 +479,7 @@ Use the Read tool to inspect CLAUDE.md content when needed for contradiction/dup
 ## Your 5-Point Checklist
 
 When you find an issue, create a suggestion file at:
-\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
+\`.claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use current UTC time for the timestamp (e.g. hygiene-20260323-143052-stale-glob.md).
 **IMPORTANT**: Always use the \`hygiene-\` prefix. Do NOT infer a naming pattern from existing files in the directory.
@@ -526,7 +527,7 @@ Flag decayed rules so the user can confirm removal.
 ## Output Format
 
 Create one file per TARGET FILE (not per issue). If a rules file has multiple problems (e.g. stale globs AND verbosity), combine them into ONE suggestion file.
-\`.claude-auto-context/suggestions/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
+\`.claude-auto-context/hygiene/hygiene-YYYYMMDD-HHMMSS-{slug}.md\`
 
 Use exactly this format:
 
@@ -1059,7 +1060,7 @@ Call all ${agentCount} agents now.`;
         maxTurns: 25,
         maxBudgetUsd: 2.00,
         persistSession: false,
-        settingSources: ['project'],
+        settingSources: [],
         stderr: (data) => log(`[stderr] ${data}`),
         agents,
       }
@@ -1103,7 +1104,7 @@ Call all ${agentCount} agents now.`;
           maxTurns: 10,
           maxBudgetUsd: 0.50,
           persistSession: false,
-          settingSources: ['project'],
+          settingSources: [],
           stderr: (data) => log(`[decay-stderr] ${data}`),
         }
       });
@@ -1178,6 +1179,7 @@ async function main() {
   // Ensure output directories exist
   mkdirSync(resolve(projectRoot, '.claude', 'rules', 'local'), { recursive: true });
   mkdirSync(resolve(projectRoot, '.claude-auto-context', 'suggestions'), { recursive: true });
+  mkdirSync(resolve(projectRoot, '.claude-auto-context', 'hygiene'), { recursive: true });
 
   // Ensure .claude/settings.json exists so sub-agents have Write permission for rules/suggestions
   const settingsPath = resolve(projectRoot, '.claude', 'settings.json');
