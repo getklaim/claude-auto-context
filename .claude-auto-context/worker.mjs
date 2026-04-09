@@ -287,27 +287,31 @@ function buildBulkPrompt(events) {
 
 function buildRulesTopicIndex(root) {
   const rulesDir = resolve(root, '.claude', 'rules');
-  if (!existsSync(rulesDir)) return '';
+  const globalRulesDir = resolve(process.env.HOME, '.claude', 'rules', 'local');
 
-  // Recursively collect all .md files under .claude/rules/
+  // Recursively collect all .md files under a directory
   const allFiles = [];
-  function walkDir(dir) {
+  const globalFiles = [];
+  function walkDir(dir, target) {
+    if (!existsSync(dir)) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const fullPath = resolve(dir, entry.name);
       if (entry.isDirectory()) {
-        walkDir(fullPath);
+        walkDir(fullPath, target);
       } else if (entry.name.endsWith('.md')) {
-        allFiles.push(fullPath);
+        target.push(fullPath);
       }
     }
   }
-  walkDir(rulesDir);
+  walkDir(rulesDir, allFiles);
+  walkDir(globalRulesDir, globalFiles);
 
-  if (allFiles.length === 0) return '';
+  if (allFiles.length === 0 && globalFiles.length === 0) return '';
 
   const withDesc = [];
   const withoutDescLocal = [];
   const withoutDescCommitted = [];
+  const globalRules = [];
 
   for (const filePath of allFiles.sort()) {
     const content = readFileSync(filePath, 'utf8');
@@ -324,7 +328,23 @@ function buildRulesTopicIndex(root) {
     }
   }
 
-  let out = `\n# Existing Rules (${allFiles.length} files) — DO NOT create a rule if the same topic already exists\n`;
+  // Global rules — read-only, never modify, used for dedup
+  for (const filePath of globalFiles.sort()) {
+    const content = readFileSync(filePath, 'utf8');
+    const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+    const relPath = relative(globalRulesDir, filePath);
+    globalRules.push({ relPath, description: descMatch?.[1] || '' });
+  }
+
+  const totalCount = allFiles.length + globalFiles.length;
+  let out = `\n# Existing Rules (${totalCount} files) — DO NOT create a rule if the same topic already exists\n`;
+
+  if (globalRules.length > 0) {
+    out += `\n## Global rules (~/.claude/rules/local/) — apply to ALL projects, do NOT duplicate:\n`;
+    for (const f of globalRules) {
+      out += `- global/${f.relPath}${f.description ? ': ' + f.description : ''}\n`;
+    }
+  }
 
   if (withDesc.length > 0) {
     out += `\n## With description:\n`;
@@ -359,6 +379,7 @@ function buildContextForAgent(root, domains) {
   if (domains.includes('rules')) {
     const rulesDir = resolve(root, '.claude', 'rules');
     const localRulesDir = resolve(root, '.claude', 'rules', 'local');
+    const globalRulesDir = resolve(process.env.HOME, '.claude', 'rules', 'local');
     const ruleFiles = [];
     if (existsSync(rulesDir)) {
       for (const f of readdirSync(rulesDir).filter(f => f.endsWith('.md'))) {
@@ -368,6 +389,11 @@ function buildContextForAgent(root, domains) {
     if (existsSync(localRulesDir)) {
       for (const f of readdirSync(localRulesDir).filter(f => f.endsWith('.md'))) {
         ruleFiles.push(`local/${f}`);
+      }
+    }
+    if (existsSync(globalRulesDir)) {
+      for (const f of readdirSync(globalRulesDir).filter(f => f.endsWith('.md'))) {
+        ruleFiles.push(`global/${f}`);
       }
     }
     summary += `\n## Rules (${ruleFiles.length} files)\n`;
@@ -445,6 +471,18 @@ function buildHygienePrompt(root) {
     }
   }
 
+  const globalRulesDir = resolve(process.env.HOME, '.claude', 'rules', 'local');
+  let globalRulesIndex = '';
+  if (existsSync(globalRulesDir)) {
+    for (const entry of readdirSync(globalRulesDir).sort()) {
+      if (!entry.endsWith('.md')) continue;
+      const content = readFileSync(resolve(globalRulesDir, entry), 'utf8');
+      const descMatch = content.match(/^description:\s*"?(.+?)"?\s*$/m);
+      const charCount = content.length;
+      globalRulesIndex += `- ${entry} (${charCount} chars)${descMatch ? ': ' + descMatch[1] : ''}\n`;
+    }
+  }
+
   let claudeMdSize = 0;
   if (existsSync(claudeMdPath)) {
     claudeMdSize = readFileSync(claudeMdPath, 'utf8').length;
@@ -470,6 +508,9 @@ ${committedRulesIndex || '(none)'}
 
 ### .claude/rules/local/ files (auto-generated):
 ${localRulesIndex || '(none)'}
+
+### ~/.claude/rules/local/ files (global, READ-ONLY — apply to ALL projects):
+${globalRulesIndex || '(none)'}
 
 ### CLAUDE.md (READ-ONLY): ${claudeMdSize} chars
 Use the Read tool to inspect CLAUDE.md content when needed for contradiction/duplicate checks.
