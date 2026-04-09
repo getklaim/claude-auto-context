@@ -72,12 +72,13 @@ Report: "체크포인트: `{CHECKPOINT_SHA}`. 문제 발생 시 여기로 롤백
 
 For each pending item, check if it has the structured format:
 
-| Has `### Read first`? | Has `### Files to modify`? | Has `### Changes`? | Has `### Acceptance criteria`? | Action |
-|---|---|---|---|---|
-| YES | YES | YES | YES | **Structured** — proceed normally |
-| Partial (missing some) | — | — | — | **Incomplete** — skip with message: "structured 포맷이 아닙니다. 스킵합니다." |
+| Has `### Files to modify`? | Has `### Changes`? | Has `### Acceptance criteria`? | Action |
+|---|---|---|---|
+| YES | YES | YES | **Structured** — proceed normally |
+| Any missing | — | — | **Legacy** — skip with message: "structured 포맷이 아닙니다. 스킵합니다." |
 
-Only suggestions with ALL required subsections (`### Read first`, `### Files to modify`, `### Changes`, `### Acceptance criteria`) are eligible for execution. Legacy format suggestions are skipped.
+**필수 3개**: `### Files to modify`, `### Changes`, `### Acceptance criteria`
+**선택 (있으면 활용)**: `### Read first`, `### Impact` — 있으면 executor에게 전달, 없으면 executor가 자체 판단
 
 ### 1c. No argument — interactive selection
 
