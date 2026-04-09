@@ -131,7 +131,7 @@ Main Claude Session
                                             │ │ rules-agent   │─┼─► .claude/rules/local/ (auto)
                                             │ │ suggestion    │─┼─► suggestions/ (pending)
                                             │ │ hooks-agent   │─┼─► .claude/hooks/ (auto)
-                                            │ │ skill-agent   │─┼─► .claude/skills/ (auto)
+                                            │ │ skills-agent   │─┼─► .claude/skills/ (auto)
                                             │ │ hygiene-agent │─┼─► hygiene/ (pending)
                                             │ └───────────────┘ │
                                             │  + quality gate   │
@@ -162,21 +162,20 @@ All runtime data lives in `.claude-auto-context/` in your project root:
 ├── collector.mjs              # Hook → SQLite relay (compressed ingestion)
 ├── worker.mjs                 # Background polling worker (Agent SDK orchestrator)
 ├── quality-gate.mjs           # Post-agent output evaluator
-├── skill-prompt-builder.mjs   # Builds context for skill-agent
+├── skill-prompt-builder.mjs   # Builds context for skills-agent
 ├── db/
-│   ├── claude-auto-context.db # SQLite (raw_events, observations, quality_evaluations)
+│   ├── claude-auto-context.db # SQLite (raw_events, observations)
 │   └── worker.log             # Worker activity log
 ├── suggestions/               # Pending structural suggestions
 └── hygiene/                   # Pending hygiene reports
 ```
 
-The SQLite database contains three tables:
+The SQLite database contains two tables:
 
 | Table | Purpose |
 |-------|---------|
 | `raw_events` | Every captured event with claim-confirm queue (`pending` → `processing` → `done` / `dead`) |
 | `observations` | Cross-session pattern observations (deduplicated by pattern_key + session_id) |
-| `quality_evaluations` | Quality gate verdicts for agent-generated files |
 
 The `db/` directory is gitignored — it's machine-local runtime data.
 

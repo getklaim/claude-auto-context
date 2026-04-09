@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// skill-prompt-builder.mjs — Utility functions for skill-agent prompt composition
+// skill-prompt-builder.mjs — Utility functions for skills-agent prompt composition
 // Exports: sanitizeSecrets, generalizeExample, loadExistingSkills
 
 import { resolve } from 'node:path';

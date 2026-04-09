@@ -689,9 +689,9 @@ function shouldRunAgent(agentName, events, db) {
       }
       return true;
     }
-    case 'skill-agent': {
+    case 'skills-agent': {
       if (events.length < 20) {
-        log(`skip skill-agent: only ${events.length} events (min 20)`);
+        log(`skip skills-agent: only ${events.length} events (min 20)`);
         return false;
       }
       return true;
@@ -707,7 +707,7 @@ const AGENT_MAP = [
   { prefix: '.claude/rules/local/', agent: 'rules-agent' },
   { prefix: '.claude-auto-context/suggestions/', agent: 'suggestion-agent' },
   { prefix: '.claude-auto-context/hygiene/', agent: 'hygiene-agent' },
-  { prefix: '.claude/skills/', agent: 'skill-agent' },
+  { prefix: '.claude/skills/', agent: 'skills-agent' },
   { prefix: '.claude/hooks/', agent: 'hooks-agent' },
 ];
 
@@ -1013,9 +1013,9 @@ ${hooksContext}`,
     };
   }
 
-  if (shouldRunAgent('skill-agent', events, db)) {
+  if (shouldRunAgent('skills-agent', events, db)) {
     const skillContext = buildContextForAgent(projectRoot, ['skills']);
-    agents['skill-agent'] = {
+    agents['skills-agent'] = {
       description: "Detect repeated multi-step workflows from raw session events and create SKILL.md files. Runs every cycle. Writes to .claude/skills/ in the target project.",
       prompt: `You are a skill extraction agent. Analyze the raw session events provided by the orchestrator to detect repeated multi-step workflows that deserve to become reusable skills.
 
@@ -1116,7 +1116,7 @@ ${skillContext}`,
   if (agents['rules-agent']) agentDescriptions.push(`${idx++}. rules-agent — Repeated conventions\n   **Focus on "User Prompts" sections** — user corrections/prohibitions reveal conventions not in code.\n   Note: rules-agent now writes to .claude/rules/local/. Rules without paths: frontmatter apply project-wide.`);
   if (agents['suggestion-agent']) agentDescriptions.push(`${idx++}. suggestion-agent — AI-unfriendly code patterns and structural issues\n   Focus on "Tool Activity" sections for repeated file reads, large files, unclear naming, missing CLAUDE.md entries.`);
   if (agents['hooks-agent']) agentDescriptions.push(`${idx++}. hooks-agent — Detect repetitive manual actions and generate hook configurations\n   **Focus on "Tool Activity" sections** — repeated tool patterns (lint, format, test) and dangerous commands.`);
-  if (agents['skill-agent']) agentDescriptions.push(`${idx++}. skill-agent — Detect repeated multi-step workflows and create SKILL.md files\n   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.`);
+  if (agents['skills-agent']) agentDescriptions.push(`${idx++}. skills-agent — Detect repeated multi-step workflows and create SKILL.md files\n   Analyzes raw session events for automation-worthy patterns. Writes to .claude/skills/ in the target project.`);
   if (agents['hygiene-agent']) agentDescriptions.push(`${idx++}. hygiene-agent — Context quality audit\n   Checks rules, hooks, and suggestions for duplicates, contradictions, and stale references.`);
 
   const agentCount = Object.keys(agents).length;
@@ -1244,17 +1244,6 @@ Call all ${agentCount} agents now.`;
     const gate = runQualityGate(snapshotBefore, projectRoot);
     if (gate.evaluated > 0) {
       log(`quality-gate: ${gate.evaluated} evaluated, ${gate.passed} passed, ${gate.failed} failed, ${gate.autoFixed} auto-fixed`);
-      const stmt = db.prepare(`
-        INSERT INTO quality_evaluations (file_path, file_type, change_type, verdict, checks_json, reverted)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      db.transaction(() => {
-        for (const r of gate.results) {
-          stmt.run(r.filePath, r.fileType, r.action, r.verdict,
-            JSON.stringify(r.checks.map(c => ({ id: c.id, name: c.name, passed: c.passed, detail: c.detail }))),
-            r.reverted ? 1 : 0);
-        }
-      })();
     }
   } catch (err) {
     log(`quality-gate: failed (non-fatal): ${err.message}`);
@@ -1312,22 +1301,7 @@ async function main() {
       log(`warning: failed to create settings.json: ${err.message}`);
     }
   }
-
-
-
-  // Quality evaluations table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS quality_evaluations (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
-      file_path   TEXT NOT NULL,
-      file_type   TEXT NOT NULL,
-      change_type TEXT NOT NULL,
-      verdict     TEXT NOT NULL,
-      checks_json TEXT NOT NULL,
-      reverted    INTEGER DEFAULT 0
-    )
-  `);
+  // quality_evaluations table removed — write-only audit log, same info in worker.log
 
   // Recover orphaned processing events from previous worker (crash/SIGKILL)
   selfHeal(db, true);
