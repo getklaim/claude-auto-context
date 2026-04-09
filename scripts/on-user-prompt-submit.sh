@@ -162,4 +162,32 @@ if [ -d "$SKILL_PROMPTS_DIR" ]; then
   fi
 fi
 
+# Agent activity notifications (one-shot)
+NOTIF_PATH="$PROJECT_DIR/.claude-auto-context/notifications.json"
+if [ -f "$NOTIF_PATH" ]; then
+  # Atomic read+delete: mv first to prevent duplicate display
+  NOTIF_TMP="${NOTIF_PATH}.reading"
+  if mv "$NOTIF_PATH" "$NOTIF_TMP" 2>/dev/null; then
+    echo "─────────────────────────────────────────────────"
+    echo "Auto Context — Agent Activity"
+    echo "─────────────────────────────────────────────────"
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '.created[]? | "  \(.agent)가 \(.file | split("/") | last)를 추가했습니다"' "$NOTIF_TMP" 2>/dev/null
+    elif command -v python3 >/dev/null 2>&1; then
+      python3 -c "
+import json,sys,os
+d=json.load(open(sys.argv[1]))
+for c in d.get('created',[]):
+    print(f\"  {c['agent']}가 {os.path.basename(c['file'])}를 추가했습니다\")
+" "$NOTIF_TMP" 2>/dev/null
+    else
+      # grep fallback — works with compact JSON (no spaces), tab-aware sed
+      grep -oE '"agent":"[^"]*"|"file":"[^"]*"' "$NOTIF_TMP" 2>/dev/null | \
+        paste - - | sed $'s/"agent":"//;s/"\t"file":".*\\//가 /;s/"$/를 추가했습니다/;s/^/  /'
+    fi
+    echo "─────────────────────────────────────────────────"
+    rm -f "$NOTIF_TMP"
+  fi
+fi
+
 exit 0

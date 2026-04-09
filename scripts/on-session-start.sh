@@ -67,28 +67,35 @@ if [ -n "$LAST_WORKER" ]; then
   DASHBOARD="${DASHBOARD} | Last worker: ${LAST_WORKER}"
 fi
 
-# Check for file creation notifications
+# Check for agent activity notifications (new object-array schema)
 NOTIF_TEXT=""
 if [ -f "$NOTIF_PATH" ]; then
-  # Read created files array using jq/python3/grep fallback chain
-  if command -v jq >/dev/null 2>&1; then
-    CREATED_FILES=$(jq -r '.created[]?' "$NOTIF_PATH" 2>/dev/null)
-  elif command -v python3 >/dev/null 2>&1; then
-    CREATED_FILES=$(python3 -c "import json,sys; [print(f) for f in json.load(open(sys.argv[1])).get('created',[])]" "$NOTIF_PATH" 2>/dev/null)
-  else
-    CREATED_FILES=$(grep -oE '"[^"]+"' "$NOTIF_PATH" 2>/dev/null | tr -d '"' | grep '/')
+  # Atomic read+delete: mv first to prevent duplicate display
+  NOTIF_TMP="${NOTIF_PATH}.reading"
+  if mv "$NOTIF_PATH" "$NOTIF_TMP" 2>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
+      CREATED=$(jq -r '.created[]? | "\(.agent)가 \(.file | split("/") | last)를 추가했습니다"' "$NOTIF_TMP" 2>/dev/null)
+    elif command -v python3 >/dev/null 2>&1; then
+      CREATED=$(python3 -c "
+import json,sys,os
+d=json.load(open(sys.argv[1]))
+for c in d.get('created',[]):
+    print(f\"{c['agent']}가 {os.path.basename(c['file'])}를 추가했습니다\")
+" "$NOTIF_TMP" 2>/dev/null)
+    else
+      # grep fallback — works with compact JSON (no spaces), tab-aware sed
+      CREATED=$(grep -oE '"agent":"[^"]*"|"file":"[^"]*"' "$NOTIF_TMP" 2>/dev/null | \
+        paste - - | sed $'s/"agent":"//;s/"\t"file":".*\\//가 /;s/"$/를 추가했습니다/')
+    fi
+    if [ -n "$CREATED" ]; then
+      NOTIF_TEXT="\n\nAuto Context agent activity (previous session):"
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        NOTIF_TEXT="${NOTIF_TEXT}\n- ${line}"
+      done <<< "$CREATED"
+    fi
+    rm -f "$NOTIF_TMP"
   fi
-
-  if [ -n "$CREATED_FILES" ]; then
-    NOTIF_TEXT="\n\nNew files added by auto-context worker (previous session):"
-    while IFS= read -r fpath; do
-      [ -n "$fpath" ] || continue
-      NOTIF_TEXT="${NOTIF_TEXT}\n- ${fpath}"
-    done <<< "$CREATED_FILES"
-  fi
-
-  # Clear notifications (one-shot)
-  rm -f "$NOTIF_PATH"
 fi
 
 # Only output if there's something to report

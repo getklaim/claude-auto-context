@@ -660,6 +660,54 @@ function shouldRunAgent(agentName, events, db) {
   }
 }
 
+// --- Output Directory Scanning for Notifications ---
+
+const AGENT_MAP = [
+  { prefix: '.claude/rules/local/', agent: 'rules-agent' },
+  { prefix: '.claude-auto-context/suggestions/', agent: 'suggestion-agent' },
+  { prefix: '.claude-auto-context/hygiene/', agent: 'hygiene-agent' },
+  { prefix: '.claude/skills/', agent: 'skill-agent' },
+  { prefix: '.claude/hooks/', agent: 'hooks-agent' },
+];
+
+function scanOutputDirs(root) {
+  const files = new Set();
+  const dirs = [
+    { path: resolve(root, '.claude', 'rules', 'local'), pattern: '.claude/rules/local/' },
+    { path: resolve(root, '.claude-auto-context', 'suggestions'), pattern: '.claude-auto-context/suggestions/' },
+    { path: resolve(root, '.claude-auto-context', 'hygiene'), pattern: '.claude-auto-context/hygiene/' },
+    { path: resolve(root, '.claude', 'hooks'), pattern: '.claude/hooks/' },
+  ];
+  for (const { path: dir, pattern } of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (f.endsWith('.md') || f.endsWith('.sh')) files.add(pattern + f);
+    }
+  }
+  // Skills: one-level recursive
+  const skillsDir = resolve(root, '.claude', 'skills');
+  if (existsSync(skillsDir)) {
+    for (const sub of readdirSync(skillsDir)) {
+      const skillMd = resolve(skillsDir, sub, 'SKILL.md');
+      if (existsSync(skillMd)) files.add(`.claude/skills/${sub}/SKILL.md`);
+    }
+  }
+  return files;
+}
+
+function writeNotifications(root, before, after) {
+  const newFiles = [...after].filter(f => !before.has(f));
+  if (newFiles.length === 0) return;
+  const created = newFiles.map(f => {
+    const match = AGENT_MAP.find(m => f.startsWith(m.prefix));
+    return { agent: match?.agent || 'unknown-agent', file: f };
+  });
+  const data = { created, timestamp: new Date().toISOString() };
+  const notifPath = resolve(root, '.claude-auto-context', 'notifications.json');
+  writeFileSync(notifPath, JSON.stringify(data));
+  log(`notifications: ${created.length} new files recorded`);
+}
+
 // --- Process Batch via Claude Agent SDK ---
 
 async function processBatch(events, db) {
@@ -1233,6 +1281,7 @@ async function main() {
     const batch = claimBatch(db);
     if (batch.length > 0) {
       log(`claimed ${batch.length} events`);
+      const before = scanOutputDirs(projectRoot);
       try {
         const includedIds = await processBatch(batch, db);
         // Only confirm events that were actually included in the prompt.
@@ -1252,6 +1301,13 @@ async function main() {
       } catch (err) {
         log(`processBatch failed: ${err.message}`);
         rejectBatch(db, batch.map(e => e.id));
+      }
+      // Always scan after — captures partial output even on error
+      try {
+        const after = scanOutputDirs(projectRoot);
+        writeNotifications(projectRoot, before, after);
+      } catch (notifErr) {
+        log(`notifications failed (non-fatal): ${notifErr.message}`);
       }
     } else {
       log('no pending events — exiting');
