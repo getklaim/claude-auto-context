@@ -56,12 +56,12 @@ For EACH acceptance criterion, verify it with a concrete tool call. Do NOT assum
 
 | Criterion pattern | Verification method |
 |---|---|
+| "No type/syntax errors" | Detect the project's type checker or linter from manifest files and run it |
+| "Tests pass" | Detect and run the project's test command from manifest files |
 | `grep -q 'X' file` | Run `grep -q 'X' file && echo PASS \|\| echo FAIL` |
 | "file exists" | Run `test -f {file} && echo PASS \|\| echo FAIL` |
-| "exports function X" | Run `grep -n 'export.*function.*X\|export.*const.*X\|export.*{.*X' {file}` |
-| "imports from Y" | Run `grep -n 'from.*Y\|require.*Y' {file}` |
-| "No TypeScript errors" | Run `npx tsc --noEmit 2>&1 \| head -20` |
-| "Tests pass" | Run `npm test 2>&1 \| tail -20` or `bun test 2>&1 \| tail -20` |
+| "exports function X" | Detect the file's language and use the appropriate export search pattern (JS: `export`, Python: `def`/`class` at module level, Go: capitalized identifier, Rust: `pub`) |
+| "imports from Y" | Detect the file's language and use the appropriate import search pattern (JS: `from`/`require`, Python: `import`/`from`, Go: `import`, Rust: `use`) |
 | Custom condition | Use the most direct verification tool (Grep, Read, Bash) |
 
 **Evidence rules:**
@@ -71,10 +71,10 @@ For EACH acceptance criterion, verify it with a concrete tool call. Do NOT assum
 
 ### Step 3: Test Suite Verification
 
-Run the test suite regardless of whether "tests pass" is an explicit criterion:
-```bash
-npm test 2>&1 || bun test 2>&1
-```
+Run the test suite regardless of whether "tests pass" is an explicit criterion.
+Detect the project's test runner from manifest files in the project root and run
+the appropriate test command. In monorepos, prefer the test command scoped to the
+changed package/module rather than running the entire suite.
 
 Compare against `PRE_EXISTING_FAILURES`:
 - **New failure** (not in pre-existing list): Record as CRITICAL issue

@@ -72,11 +72,14 @@ Follow the `### Changes` numbered list in exact order. For EACH individual chang
 
 1. **Announce**: "Change {N}/{total}: {description}"
 2. **Execute**: Make the edit using Edit or Write tool
-3. **Verify syntax**:
-   - TypeScript/JavaScript: `npx tsc --noEmit 2>&1 | head -20` (if tsconfig.json exists)
-   - Shell scripts: `bash -n {file}`
-   - JSON: `python3 -m json.tool {file} > /dev/null 2>&1`
-   - Markdown/text: skip syntax check
+3. **Verify syntax**: Detect the project's tech stack from manifest files in the project root
+   (e.g., package.json, tsconfig.json, Cargo.toml, go.mod, pyproject.toml, Makefile, etc.)
+   and run the appropriate syntax/type check command for the changed file's language.
+   Determine the check command per-file based on the file's extension and nearest manifest,
+   not globally for the project (important for monorepos with mixed languages).
+   If no syntax checker is available for the file type, skip with a note.
+   If the detected command fails with "command not found", skip with a note rather than
+   marking it as a syntax failure.
 4. **If syntax fails**: Revert this specific change (`git checkout -- {file}`), report error, continue to next change. Record as partial failure.
 5. **If syntax passes**: Proceed to next change.
 
@@ -100,10 +103,11 @@ Each commit should be independently revertable. Do NOT batch all changes into on
 
 ### Step 6: Test Verification
 
-If `TEST_RUNNER` is "HAS_TESTS":
-```bash
-npm test 2>&1 || bun test 2>&1
-```
+If `TEST_RUNNER` is "HAS_TESTS": Detect and run the project's test command.
+Look for test scripts in manifest files (package.json scripts.test, Makefile test target,
+Cargo.toml, go.mod, pyproject.toml, etc.) and run the appropriate test command.
+In monorepos, prefer the test command scoped to the changed package/module rather than
+running the entire suite.
 
 Compare results against `PRE_EXISTING_FAILURES`:
 - **New failure**: Record in output as ISSUE

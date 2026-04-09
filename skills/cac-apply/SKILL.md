@@ -36,13 +36,29 @@ If output is non-empty:
 ### 0b. Test runner detection
 
 ```bash
-[ -f package.json ] && cat package.json | grep -q '"test"' && echo "HAS_TESTS" || echo "NO_TESTS"
+# Detect test runner from any supported manifest
+HAS_TESTS="NO_TESTS"
+[ -f package.json ] && grep -q '"test"' package.json && HAS_TESTS="HAS_TESTS"
+[ -f Makefile ] && grep -q '^test:' Makefile && HAS_TESTS="HAS_TESTS"
+[ -f Cargo.toml ] && HAS_TESTS="HAS_TESTS"
+[ -f go.mod ] && HAS_TESTS="HAS_TESTS"
+[ -f pyproject.toml ] && HAS_TESTS="HAS_TESTS"
+[ -f setup.py ] && HAS_TESTS="HAS_TESTS"
+[ -f Gemfile ] && HAS_TESTS="HAS_TESTS"
+echo "$HAS_TESTS"
 ```
 
 Record `HAS_TESTS` or `NO_TESTS`. If tests exist, verify they pass BEFORE any changes:
 
 ```bash
-npm test 2>&1 || bun test 2>&1
+# Run pre-change tests using detected manifest
+if [ -f package.json ] && grep -q '"test"' package.json; then npm test 2>&1
+elif [ -f Cargo.toml ]; then cargo test 2>&1
+elif [ -f go.mod ]; then go test ./... 2>&1
+elif [ -f pyproject.toml ]; then pytest 2>&1
+elif [ -f Makefile ] && grep -q '^test:' Makefile; then make test 2>&1
+elif [ -f Gemfile ]; then bundle exec rake test 2>&1
+fi
 ```
 
 If tests already fail: report "기존 테스트가 이미 실패합니다." Ask user whether to proceed. Record failing test names as `PRE_EXISTING_FAILURES`.
