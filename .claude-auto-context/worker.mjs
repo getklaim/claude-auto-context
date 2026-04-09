@@ -800,17 +800,33 @@ pending
 
 ## Proposal
 
+### Read first
+- {file1.ext} — {why executor must read this before making changes, e.g. "contains function to extract" or "import pattern reference"}
+- {file2.ext} — {dependency or convention reference}
+
 ### Files to modify
 - {file1.ext} — {what changes in this file}
-- {file2.ext} — {what changes in this file (use "new file" for creation)}
+- {file2.ext (new file)} — {what this new file will contain}
 
 ### Changes
-1. {In file1.ext: specific change description with enough detail to execute without ambiguity}
-2. {In file2.ext: specific change description}
+1. In {file1.ext}, function \`{functionName}\` (lines ~{N}-{M}):
+   - {specific operation: extract, rename, move, delete, modify}
+   - {what to do with imports/exports after the change}
+2. In {file2.ext (new file)}:
+   - Create with exports: {exportName1}, {exportName2}
+   - Import dependencies: {dep1} from {source}
+3. In {file3.ext}:
+   - Update import: change \`from './{old}'\` to \`from './{new}'\`
+
+### Impact
+- {other-file.ext} — imports from {file1.ext}, import path may need update
+- {test-file.ext} — test assertions may reference moved functions
 
 ### Acceptance criteria
-- [ ] {verifiable condition — e.g., "file2.ext exists and exports functionName"}
-- [ ] {verifiable condition — e.g., "file1.ext imports from file2.ext"}
+- [ ] \`grep -q '{exportName}' {new-file.ext}\` — export exists in new location
+- [ ] \`grep -q 'from.*{new-file}' {file1.ext}\` — import path updated
+- [ ] No TypeScript/syntax errors in modified files
+- [ ] Existing tests pass without modification (or test updates documented)
 
 ## Evidence Sessions
 - session_{id} ({date}): {what was observed}
@@ -821,7 +837,18 @@ pending
 - Estimated impact: {description}
 \`\`\`
 
-**IMPORTANT**: The \`## Proposal\` section MUST contain all three subsections (\`### Files to modify\`, \`### Changes\`, \`### Acceptance criteria\`). Proposals without these subsections are incomplete and will be rejected.
+**IMPORTANT**: The \`## Proposal\` section MUST contain all five subsections (\`### Read first\`, \`### Files to modify\`, \`### Changes\`, \`### Impact\`, \`### Acceptance criteria\`). Proposals without these subsections are incomplete and will be rejected.
+
+**Changes section rules**:
+- Each change MUST name the target function, class, or section (not just the file)
+- Include approximate line numbers when the target file exists (e.g., "lines ~97-122")
+- Describe the operation: extract, rename, move, delete, split, merge
+- Specify import/export updates needed after the change
+
+**Acceptance criteria rules**:
+- Each criterion MUST be verifiable by a CLI command (grep, test -f, tsc --noEmit, npm test)
+- Write the verification command inline: \`grep -q 'pattern' file\`
+- Do NOT use subjective criteria ("code is cleaner", "better organized")
 
 ## Rules
 - Reference specific file paths from the session events — never use generic placeholders
